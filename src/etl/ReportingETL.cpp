@@ -594,6 +594,10 @@ ReportingETL::monitor()
         BOOST_LOG_TRIVIAL(info)
             << __func__ << " : "
             << "Database already populated. Picking up from the tip of history";
+        std::thread t{[this, latestSequence]() {
+            BOOST_LOG_TRIVIAL(info) << "Loading cache";
+            loadBalancer_->loadInitialLedger(*latestSequence, true);
+        }};
     }
     if (!latestSequence)
     {
@@ -669,6 +673,10 @@ ReportingETL::monitorReadOnly()
     if (!mostRecent)
         return;
     uint32_t sequence = *mostRecent;
+    std::thread t{[this, sequence]() {
+        BOOST_LOG_TRIVIAL(info) << "Loading cache";
+        loadBalancer_->loadInitialLedger(sequence, true);
+    }};
     while (!stopping_ &&
            networkValidatedLedgers_->waitUntilValidatedByNetwork(sequence))
     {

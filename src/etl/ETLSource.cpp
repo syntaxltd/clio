@@ -527,7 +527,8 @@ public:
         std::unique_ptr<org::xrpl::rpc::v1::XRPLedgerAPIService::Stub>& stub,
         grpc::CompletionQueue& cq,
         BackendInterface& backend,
-        bool abort = false)
+        bool abort,
+        bool cacheOnly = false)
     {
         BOOST_LOG_TRIVIAL(info) << "Processing response. "
                                 << "Marker prefix = " << getMarkerPrefix();
@@ -579,10 +580,11 @@ public:
             cacheUpdates.push_back(
                 {ripple::uint256::fromVoid(obj.mutable_key()),
                  {obj.mutable_data()->begin(), obj.mutable_data()->end()}});
-            backend.writeLedgerObject(
-                std::move(*obj.mutable_key()),
-                request_.ledger().sequence(),
-                std::move(*obj.mutable_data()));
+            if (!cacheOnly)
+                backend.writeLedgerObject(
+                    std::move(*obj.mutable_key()),
+                    request_.ledger().sequence(),
+                    std::move(*obj.mutable_data()));
         }
         backend.updateCache(cacheUpdates, request_.ledger().sequence());
         BOOST_LOG_TRIVIAL(trace) << "Wrote objects";
@@ -619,7 +621,7 @@ public:
 
 template <class Derived>
 bool
-ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence)
+ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
 {
     if (!stub_)
         return false;
@@ -664,7 +666,7 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence)
         {
             BOOST_LOG_TRIVIAL(info)
                 << "Marker prefix = " << ptr->getMarkerPrefix();
-            auto result = ptr->process(stub_, cq, *backend_, abort);
+            auto result = ptr->process(stub_, cq, *backend_, abort, cacheOnly);
             if (result != AsyncCallData::CallStatus::MORE)
             {
                 numFinished++;
@@ -735,11 +737,11 @@ ETLLoadBalancer::ETLLoadBalancer(
 }
 
 void
-ETLLoadBalancer::loadInitialLedger(uint32_t sequence)
+ETLLoadBalancer::loadInitialLedger(uint32_t sequence, bool cacheOnly)
 {
     execute(
-        [this, &sequence](auto& source) {
-            bool res = source->loadInitialLedger(sequence);
+        [this, cacheOnly, &sequence](auto& source) {
+            bool res = source->loadInitialLedger(sequence, cacheOnly);
             if (!res)
             {
                 BOOST_LOG_TRIVIAL(error) << "Failed to download initial ledger."

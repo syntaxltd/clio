@@ -4,6 +4,9 @@ void
 Cache::insert(ripple::uint256 const& key, Blob const& value, uint32_t seq)
 {
     auto entry = map_[key];
+    // stale insert, do nothing
+    if (seq <= entry.recent.seq)
+        return;
     entry.old = entry.recent;
     entry.recent = {seq, value};
     if (value.empty())
