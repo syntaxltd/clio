@@ -3,6 +3,7 @@
 #include <ripple/ledger/ReadView.h>
 #include <boost/asio.hpp>
 #include <backend/BackendIndexer.h>
+#include <backend/Cache.h>
 #include <backend/DBHelpers.h>
 class ReportingETL;
 class AsyncCallData;
@@ -78,6 +79,7 @@ protected:
     mutable BackendIndexer indexer_;
     mutable bool isFirst_ = true;
     mutable std::optional<LedgerRange> range;
+    mutable Cache cache_;
 
 public:
     BackendInterface(boost::json::object const& config) : indexer_(config)
@@ -198,6 +200,11 @@ protected:
         else
             range->maxSequence = newMax;
     }
+
+    void
+    updateCache(
+        std::vector<std::pair<ripple::uint256, Blob>> const& updates,
+        uint32_t seq) const;
 
     virtual void
     writeLedger(

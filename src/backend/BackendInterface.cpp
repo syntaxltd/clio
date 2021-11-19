@@ -47,6 +47,13 @@ BackendInterface::writeLedgerObject(
     indexer_.addKey(std::move(key256));
     doWriteLedgerObject(std::move(key), seq, std::move(blob));
 }
+void
+BackendInterface::updateCache(
+    std::vector<std::pair<ripple::uint256, Blob>> const& updates,
+    uint32_t seq) const
+{
+    cache_.update(updates, seq);
+}
 std::optional<LedgerRange>
 BackendInterface::hardFetchLedgerRangeNoThrow() const
 {

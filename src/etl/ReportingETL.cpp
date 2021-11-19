@@ -268,13 +268,21 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
     BOOST_LOG_TRIVIAL(debug) << __func__ << " : "
                              << "wrote ledger header";
 
+    std::vector<std::pair<ripple::uint256, Blob>> cacheUpdates;
+    cacheUpdates.reserve(rawData.ledger_objects().objects_size());
     for (auto& obj : *(rawData.mutable_ledger_objects()->mutable_objects()))
     {
+        cacheUpdates.push_back(
+            {ripple::uint256::fromVoid(obj.mutable_key()),
+             {obj.mutable_data()->begin(), obj.mutable_data()->end()}});
+
         backend_->writeLedgerObject(
             std::move(*obj.mutable_key()),
             lgrInfo.seq,
             std::move(*obj.mutable_data()));
     }
+    backend_->updateCache(cacheUpdates, lgrInfo.seq);
+
     BOOST_LOG_TRIVIAL(debug)
         << __func__ << " : "
         << "Inserted/modified/deleted all objects. Number of objects = "

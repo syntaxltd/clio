@@ -55,7 +55,7 @@ class Cache
 
 public:
     void
-    updateCache(
+    update(
         std::vector<std::pair<ripple::uint256, Blob>> const& blobs,
         uint32_t seq);
 

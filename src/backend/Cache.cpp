@@ -24,7 +24,7 @@ Cache::select(CacheEntry const& entry, uint32_t seq)
     return {};
 }
 void
-Cache::updateCache(
+Cache::update(
     std::vector<std::pair<ripple::uint256, Blob>> const& blobs,
     uint32_t seq)
 {

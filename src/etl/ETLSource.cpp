@@ -572,13 +572,19 @@ public:
         }
 
         BOOST_LOG_TRIVIAL(trace) << "Writing objects";
+        std::vector<std::pair<ripple::uint256, Blob>> cacheUpdates;
+        cacheUpdates.reserve(cur_->ledger_objects().objects_size());
         for (auto& obj : *(cur_->mutable_ledger_objects()->mutable_objects()))
         {
+            cacheUpdates.push_back(
+                {ripple::uint256::fromVoid(obj.mutable_key()),
+                 {obj.mutable_data()->begin(), obj.mutable_data()->end()}});
             backend.writeLedgerObject(
                 std::move(*obj.mutable_key()),
                 request_.ledger().sequence(),
                 std::move(*obj.mutable_data()));
         }
+        backend.updateCache(cacheUpdates, request_.ledger().sequence());
         BOOST_LOG_TRIVIAL(trace) << "Wrote objects";
 
         return more ? CallStatus::MORE : CallStatus::DONE;
