@@ -777,7 +777,7 @@ async def ledger_range(ip, port):
                 if rng == "empty":
                     return (0,0)
                 idx = rng.find("-")
-                return (int(rng[0:idx]),int(rng[idx+1:-1]))
+                return (int(rng[0:idx]),int(rng[idx+1:]))
                 
             res = res["result"]
             return (res["ledger_index_min"],res["ledger_index_max"])

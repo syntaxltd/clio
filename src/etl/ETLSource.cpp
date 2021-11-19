@@ -28,7 +28,6 @@ ETLSourceImpl<Derived>::ETLSourceImpl(
     , subscriptions_(subscriptions)
     , balancer_(balancer)
 {
-
     if (config.contains("ip"))
     {
         auto ipJs = config.at("ip").as_string();
@@ -72,13 +71,13 @@ ETLSourceImpl<Derived>::reconnect(boost::beast::error_code ec)
     // when the timer is cancelled. connection_refused will occur repeatedly
     std::string err = ec.message();
     // if we cannot connect to the transaction processing process
-    if (ec.category() == boost::asio::error::get_ssl_category()) {
-        err = std::string(" (")
-                +boost::lexical_cast<std::string>(ERR_GET_LIB(ec.value()))+","
-                +boost::lexical_cast<std::string>(ERR_GET_FUNC(ec.value()))+","
-                +boost::lexical_cast<std::string>(ERR_GET_REASON(ec.value()))+") "
-        ;
-        //ERR_PACK /* crypto/err/err.h */
+    if (ec.category() == boost::asio::error::get_ssl_category())
+    {
+        err = std::string(" (") +
+            boost::lexical_cast<std::string>(ERR_GET_LIB(ec.value())) + "," +
+            boost::lexical_cast<std::string>(ERR_GET_FUNC(ec.value())) + "," +
+            boost::lexical_cast<std::string>(ERR_GET_REASON(ec.value())) + ") ";
+        // ERR_PACK /* crypto/err/err.h */
         char buf[128];
         ::ERR_error_string_n(ec.value(), buf, sizeof(buf));
         err += buf;
@@ -174,20 +173,18 @@ SslETLSource::close(bool startAgain)
                     {
                         ws_ = std::make_unique<boost::beast::websocket::stream<
                             boost::beast::ssl_stream<
-                            boost::beast::tcp_stream>>>(
+                                boost::beast::tcp_stream>>>(
                             boost::asio::make_strand(ioc_), *sslCtx_);
-                        
+
                         run();
                     }
-
                 });
         }
         else if (startAgain)
         {
             ws_ = std::make_unique<boost::beast::websocket::stream<
-                            boost::beast::ssl_stream<
-                            boost::beast::tcp_stream>>>(
-                            boost::asio::make_strand(ioc_), *sslCtx_);
+                boost::beast::ssl_stream<boost::beast::tcp_stream>>>(
+                boost::asio::make_strand(ioc_), *sslCtx_);
 
             run();
         }
@@ -209,10 +206,12 @@ ETLSourceImpl<Derived>::onResolve(
     }
     else
     {
-        boost::beast::get_lowest_layer(derived().ws()).expires_after(
-            std::chrono::seconds(30));
-        boost::beast::get_lowest_layer(derived().ws()).async_connect(
-            results, [this](auto ec, auto ep) { derived().onConnect(ec, ep); });
+        boost::beast::get_lowest_layer(derived().ws())
+            .expires_after(std::chrono::seconds(30));
+        boost::beast::get_lowest_layer(derived().ws())
+            .async_connect(results, [this](auto ec, auto ep) {
+                derived().onConnect(ec, ep);
+            });
     }
 }
 
@@ -241,20 +240,22 @@ PlainETLSource::onConnect(
                 boost::beast::role_type::client));
 
         // Set a decorator to change the User-Agent of the handshake
-        derived().ws().set_option(boost::beast::websocket::stream_base::decorator(
-            [](boost::beast::websocket::request_type& req) {
-                req.set(
-                    boost::beast::http::field::user_agent,
-                    std::string(BOOST_BEAST_VERSION_STRING) +
-                        " websocket-client-async");
-            }));
+        derived().ws().set_option(
+            boost::beast::websocket::stream_base::decorator(
+                [](boost::beast::websocket::request_type& req) {
+                    req.set(
+                        boost::beast::http::field::user_agent,
+                        std::string(BOOST_BEAST_VERSION_STRING) +
+                            " websocket-client-async");
+                }));
 
         // Update the host_ string. This will provide the value of the
         // Host HTTP header during the WebSocket handshake.
         // See https://tools.ietf.org/html/rfc7230#section-5.4
         auto host = ip_ + ':' + std::to_string(endpoint.port());
         // Perform the websocket handshake
-        derived().ws().async_handshake(host, "/", [this](auto ec) { onHandshake(ec); });
+        derived().ws().async_handshake(
+            host, "/", [this](auto ec) { onHandshake(ec); });
     }
 }
 
@@ -283,13 +284,14 @@ SslETLSource::onConnect(
                 boost::beast::role_type::client));
 
         // Set a decorator to change the User-Agent of the handshake
-        derived().ws().set_option(boost::beast::websocket::stream_base::decorator(
-            [](boost::beast::websocket::request_type& req) {
-                req.set(
-                    boost::beast::http::field::user_agent,
-                    std::string(BOOST_BEAST_VERSION_STRING) +
-                        " websocket-client-async");
-            }));
+        derived().ws().set_option(
+            boost::beast::websocket::stream_base::decorator(
+                [](boost::beast::websocket::request_type& req) {
+                    req.set(
+                        boost::beast::http::field::user_agent,
+                        std::string(BOOST_BEAST_VERSION_STRING) +
+                            " websocket-client-async");
+                }));
 
         // Update the host_ string. This will provide the value of the
         // Host HTTP header during the WebSocket handshake.
@@ -339,15 +341,17 @@ ETLSourceImpl<Derived>::onHandshake(boost::beast::error_code ec)
         std::string s = boost::json::serialize(jv);
         BOOST_LOG_TRIVIAL(trace) << "Sending subscribe stream message";
         // Send the message
-        derived().ws().async_write(boost::asio::buffer(s), [this](auto ec, size_t size) {
-            onWrite(ec, size);
-        });
+        derived().ws().async_write(
+            boost::asio::buffer(s),
+            [this](auto ec, size_t size) { onWrite(ec, size); });
     }
 }
 
 template <class Derived>
 void
-ETLSourceImpl<Derived>::onWrite(boost::beast::error_code ec, size_t bytesWritten)
+ETLSourceImpl<Derived>::onWrite(
+    boost::beast::error_code ec,
+    size_t bytesWritten)
 {
     BOOST_LOG_TRIVIAL(trace)
         << __func__ << " : ec = " << ec << " - " << toString();
@@ -382,7 +386,7 @@ ETLSourceImpl<Derived>::onRead(boost::beast::error_code ec, size_t size)
 
         BOOST_LOG_TRIVIAL(trace)
             << __func__ << " : calling async_read - " << toString();
-         derived().ws().async_read(
+        derived().ws().async_read(
             readBuffer_, [this](auto ec, size_t size) { onRead(ec, size); });
     }
 }
@@ -482,13 +486,34 @@ class AsyncCallData
     std::unique_ptr<grpc::ClientContext> context_;
 
     grpc::Status status_;
+    unsigned char nextPrefix_;
 
 public:
-    AsyncCallData(uint32_t seq)
+    AsyncCallData(
+        uint32_t seq,
+        ripple::uint256 const& marker,
+        std::optional<ripple::uint256> const& nextMarker)
     {
         request_.mutable_ledger()->set_sequence(seq);
         request_.set_user("ETL");
 
+        if (marker.isNonZero())
+        {
+            request_.set_marker(marker.data(), marker.size());
+        }
+        nextPrefix_ = 0x00;
+        if (nextMarker)
+            nextPrefix_ = nextMarker->data()[0];
+
+        unsigned char prefix = marker.data()[0];
+
+        BOOST_LOG_TRIVIAL(debug)
+            << "Setting up AsyncCallData. marker = " << strHex(marker)
+            << " . prefix = " << ripple::strHex(std::string(1, prefix))
+            << " . nextPrefix_ = "
+            << ripple::strHex(std::string(1, nextPrefix_));
+
+        assert(nextPrefix_ > prefix || nextPrefix_ == 0x00);
         cur_ = std::make_unique<org::xrpl::rpc::v1::GetLedgerDataResponse>();
 
         next_ = std::make_unique<org::xrpl::rpc::v1::GetLedgerDataResponse>();
@@ -524,7 +549,6 @@ public:
             BOOST_LOG_TRIVIAL(warning)
                 << "AsyncCallData is_unlimited is false. Make sure "
                    "secure_gateway is set correctly at the ETL source";
-            assert(false);
         }
 
         std::swap(cur_, next_);
@@ -533,6 +557,11 @@ public:
 
         // if no marker returned, we are done
         if (cur_->marker().size() == 0)
+            more = false;
+
+        // if returned marker is greater than our end, we are done
+        unsigned char prefix = cur_->marker()[0];
+        if (nextPrefix_ != 0x00 && prefix >= nextPrefix_)
             more = false;
 
         // if we are not done, make the next async call
@@ -595,11 +624,18 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence)
 
     bool ok = false;
 
-    std::vector<AsyncCallData> calls;
-    calls.emplace_back(sequence);
-
     BOOST_LOG_TRIVIAL(info) << "Starting data download for ledger " << sequence
                             << ". Using source = " << toString();
+    std::vector<AsyncCallData> calls;
+    std::vector<ripple::uint256> markers{getMarkers(16)};
+
+    for (size_t i = 0; i < markers.size(); ++i)
+    {
+        std::optional<ripple::uint256> nextMarker;
+        if (i + 1 < markers.size())
+            nextMarker = markers[i + 1];
+        calls.emplace_back(sequence, markers[i], nextMarker);
+    }
 
     for (auto& c : calls)
         c.call(stub_, cq);
@@ -663,7 +699,6 @@ ETLSourceImpl<Derived>::fetchLedger(uint32_t ledgerSequence, bool getObjects)
                "false. Make sure secure_gateway is set "
                "correctly on the ETL source. source = "
             << toString() << " status = " << status.error_message();
-        assert(false);
     }
     return {status, std::move(response)};
 }
@@ -807,7 +842,8 @@ ETLSourceImpl<Derived>::getRippledForwardingStub() const
 
 template <class Derived>
 std::optional<boost::json::object>
-ETLSourceImpl<Derived>::forwardToRippled(boost::json::object const& request) const
+ETLSourceImpl<Derived>::forwardToRippled(
+    boost::json::object const& request) const
 {
     BOOST_LOG_TRIVIAL(debug) << "Attempting to forward request to tx. "
                              << "request = " << boost::json::serialize(request);
