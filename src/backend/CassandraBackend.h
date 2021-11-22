@@ -553,8 +553,8 @@ private:
     CassandraPreparedStatement selectLedgerPage_;
     CassandraPreparedStatement upperBound2_;
     CassandraPreparedStatement getToken_;
-    CassandraPreparedStatement insertKey_;
-    CassandraPreparedStatement selectKeys_;
+    CassandraPreparedStatement insertSuccessor_;
+    CassandraPreparedStatement selectSuccessor_;
     CassandraPreparedStatement insertAccountTx_;
     CassandraPreparedStatement selectAccountTx_;
     CassandraPreparedStatement selectAccountTxForward_;
@@ -816,6 +816,10 @@ public:
 
     void
     doWriteLedgerObject(std::string&& key, uint32_t seq, std::string&& blob)
+        const override;
+
+    void
+    writeSuccessor(std::string&& key, uint32_t seq, std::string&& successor)
         const override;
 
     void

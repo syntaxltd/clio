@@ -24,7 +24,7 @@ class Cache
     std::map<ripple::uint256, CacheEntry> map_;
     std::vector<ripple::uint256> pendingDeletes_;
     std::vector<ripple::uint256> pendingSweeps_;
-    std::shared_mutex mtx_;
+    mutable std::shared_mutex mtx_;
 
     void
     insert(ripple::uint256 const& key, Blob const& value, uint32_t seq);
@@ -51,7 +51,7 @@ class Cache
     }
     */
     std::optional<Blob>
-    select(CacheEntry const& entry, uint32_t seq);
+    select(CacheEntry const& entry, uint32_t seq) const;
 
 public:
     void
@@ -60,13 +60,13 @@ public:
         uint32_t seq);
 
     std::optional<Blob>
-    get(ripple::uint256 const& key, uint32_t seq);
+    get(ripple::uint256 const& key, uint32_t seq) const;
 
     std::optional<std::pair<ripple::uint256, Blob>>
-    getSuccessor(ripple::uint256 const& key, uint32_t seq);
+    getSuccessor(ripple::uint256 const& key, uint32_t seq) const;
 
     std::optional<std::pair<ripple::uint256, Blob>>
-    getPredecessor(ripple::uint256 const& key, uint32_t seq);
+    getPredecessor(ripple::uint256 const& key, uint32_t seq) const;
 };
 
 #endif

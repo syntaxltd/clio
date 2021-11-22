@@ -6,6 +6,7 @@
 #include <boost/json.hpp>
 #include <boost/json/src.hpp>
 #include <boost/log/trivial.hpp>
+#include <backend/DBHelpers.h>
 #include <etl/ETLSource.h>
 #include <etl/ReportingETL.h>
 
@@ -489,6 +490,8 @@ class AsyncCallData
     unsigned char nextPrefix_;
 
 public:
+    std::string lastKey_;
+    std::string firstKey_;
     AsyncCallData(
         uint32_t seq,
         ripple::uint256 const& marker,
@@ -575,16 +578,41 @@ public:
         BOOST_LOG_TRIVIAL(trace) << "Writing objects";
         std::vector<std::pair<ripple::uint256, Blob>> cacheUpdates;
         cacheUpdates.reserve(cur_->ledger_objects().objects_size());
-        for (auto& obj : *(cur_->mutable_ledger_objects()->mutable_objects()))
+        for (int i = 0; i < cur_->ledger_objects().objects_size(); ++i)
         {
+            auto& obj = *(cur_->mutable_ledger_objects()->mutable_objects(i));
             cacheUpdates.push_back(
                 {ripple::uint256::fromVoid(obj.mutable_key()),
                  {obj.mutable_data()->begin(), obj.mutable_data()->end()}});
             if (!cacheOnly)
+            {
+                if (lastKey_.size())
+                {
+                    backend.writeSuccessor(
+                        std::move(lastKey_),
+                        request_.ledger().sequence(),
+                        std::move(std::string{obj.key()}));
+                    lastKey_ = {};
+                }
+                if (i + 1 < cur_->ledger_objects().objects_size())
+                {
+                    backend.writeSuccessor(
+                        std::move(std::string{obj.key()}),
+                        request_.ledger().sequence(),
+                        std::move(std::string{
+                            cur_->ledger_objects().objects(i + 1).key()}));
+                }
+                else
+                {
+                    lastKey_ = obj.key();
+                }
+                if (!firstKey_.size())
+                    firstKey_ = obj.key();
                 backend.writeLedgerObject(
                     std::move(*obj.mutable_key()),
                     request_.ledger().sequence(),
                     std::move(*obj.mutable_data()));
+            }
         }
         backend.updateCache(cacheUpdates, request_.ledger().sequence());
         BOOST_LOG_TRIVIAL(trace) << "Wrote objects";
@@ -650,6 +678,7 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
 
     size_t numFinished = 0;
     bool abort = false;
+    std::vector<std::string> edgeKeys;
     while (numFinished < calls.size() && cq.Next(&tag, &ok))
     {
         assert(tag);
@@ -669,6 +698,8 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
             auto result = ptr->process(stub_, cq, *backend_, abort, cacheOnly);
             if (result != AsyncCallData::CallStatus::MORE)
             {
+                edgeKeys.push_back(ptr->firstKey_);
+                edgeKeys.push_back(ptr->lastKey_);
                 numFinished++;
                 BOOST_LOG_TRIVIAL(info)
                     << "Finished a marker. "
@@ -680,7 +711,25 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
             }
         }
     }
-    return !abort;
+    if (!abort)
+    {
+        std::sort(edgeKeys.begin(), edgeKeys.end());
+        for (size_t i = 1; i < edgeKeys.size() - 1; i = i + 2)
+        {
+            backend_->writeSuccessor(
+                std::move(edgeKeys[i]), sequence, std::move(edgeKeys[i + 1]));
+        }
+        ripple::uint256 zero;
+        backend_->writeSuccessor(
+            uint256ToString(zero), sequence, std::move(edgeKeys[0]));
+        zero--;
+        backend_->writeSuccessor(
+            std::move(edgeKeys[edgeKeys.size() - 1]),
+            sequence,
+            uint256ToString(zero));
+        return true;
+    }
+    return false;
 }
 
 template <class Derived>

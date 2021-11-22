@@ -82,4 +82,9 @@ deserializeHeader(ripple::Slice data)
 
     return info;
 }
+inline std::string
+uint256ToString(ripple::uint256 const& uint)
+{
+    return {reinterpret_cast<const char*>(uint.data()), uint.size()};
+}
 #endif

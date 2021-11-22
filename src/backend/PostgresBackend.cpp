@@ -82,6 +82,27 @@ PostgresBackend::doWriteLedgerObject(
 }
 
 void
+PostgresBackend::writeSuccessor(
+    std::string&& key,
+    uint32_t seq,
+    std::string&& successor) const
+{
+    successorBuffer_ << "\\\\x" << ripple::strHex(key) << '\t'
+                     << std::to_string(seq) << '\t' << "\\\\x"
+                     << ripple::strHex(successor) << '\n';
+    numRowsInSuccessorBuffer_++;
+    if (numRowsInSuccessorBuffer_ % writeInterval_ == 0)
+    {
+        BOOST_LOG_TRIVIAL(info)
+            << __func__ << " Flushing large buffer. num successors = "
+            << numRowsInSuccessorBuffer_;
+        writeConnection_.bulkInsert("successor", successorBuffer_.str());
+        BOOST_LOG_TRIVIAL(info) << __func__ << " Flushed large buffer";
+        successorBuffer_.str("");
+    }
+}
+
+void
 PostgresBackend::writeTransaction(
     std::string&& hash,
     uint32_t seq,
@@ -649,6 +670,9 @@ PostgresBackend::doFinishWrites() const
         BOOST_LOG_TRIVIAL(debug)
             << __func__ << " objects size = " << objectsStr.size()
             << " txns size = " << txStr.size();
+        std::string successorStr = successorBuffer_.str();
+        if (successorStr.size())
+            writeConnection_.bulkInsert("successor", successorStr);
     }
     auto res = writeConnection_("COMMIT");
     if (!res || res.status() != PGRES_COMMAND_OK)
@@ -661,6 +685,8 @@ PostgresBackend::doFinishWrites() const
     transactionsBuffer_.clear();
     objectsBuffer_.str("");
     objectsBuffer_.clear();
+    successorBuffer_.str("");
+    successorBuffer_.clear();
     accountTxBuffer_.str("");
     accountTxBuffer_.clear();
     numRowsInObjectsBuffer_ = 0;

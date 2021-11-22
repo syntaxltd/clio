@@ -16,7 +16,7 @@ Cache::insert(ripple::uint256 const& key, Blob const& value, uint32_t seq)
 }
 
 std::optional<Blob>
-Cache::select(CacheEntry const& entry, uint32_t seq)
+Cache::select(CacheEntry const& entry, uint32_t seq) const
 {
     if (seq < entry.old.seq)
         return {};
@@ -47,7 +47,7 @@ Cache::update(
     }
 }
 std::optional<std::pair<ripple::uint256, Blob>>
-Cache::getSuccessor(ripple::uint256 const& key, uint32_t seq)
+Cache::getSuccessor(ripple::uint256 const& key, uint32_t seq) const
 {
     ripple::uint256 curKey = key;
     std::shared_lock lck{mtx_};
@@ -68,7 +68,7 @@ Cache::getSuccessor(ripple::uint256 const& key, uint32_t seq)
     }
 }
 std::optional<std::pair<ripple::uint256, Blob>>
-Cache::getPredecessor(ripple::uint256 const& key, uint32_t seq)
+Cache::getPredecessor(ripple::uint256 const& key, uint32_t seq) const
 {
     ripple::uint256 curKey = key;
     std::shared_lock lck{mtx_};
@@ -90,7 +90,7 @@ Cache::getPredecessor(ripple::uint256 const& key, uint32_t seq)
     }
 }
 std::optional<Blob>
-Cache::get(ripple::uint256 const& key, uint32_t seq)
+Cache::get(ripple::uint256 const& key, uint32_t seq) const
 {
     std::shared_lock lck{mtx_};
     auto e = map_.find(key);

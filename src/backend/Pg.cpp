@@ -824,10 +824,11 @@ create table if not exists account_transactions6 partition of account_transactio
 create table if not exists account_transactions7 partition of account_transactions for values from (60000000) to (70000000);
 
 
-CREATE TABLE IF NOT EXISTS keys (
-    ledger_seq bigint NOT NULL, 
-    key bytea NOT NULL,
-    PRIMARY KEY(ledger_seq, key)
+CREATE TABLE IF NOT EXISTS successor (
+    key bytea NOT NULL, 
+    seq bigint NOT NULL,
+    next bytea NOT NULL,
+    PRIMARY KEY(key, seq)
 );
 
 

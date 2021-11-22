@@ -273,9 +273,47 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
     cacheUpdates.reserve(rawData.ledger_objects().objects_size());
     for (auto& obj : *(rawData.mutable_ledger_objects()->mutable_objects()))
     {
+        auto key = ripple::uint256::fromVoid(obj.mutable_key());
         cacheUpdates.push_back(
-            {ripple::uint256::fromVoid(obj.mutable_key()),
-             {obj.mutable_data()->begin(), obj.mutable_data()->end()}});
+            {key, {obj.mutable_data()->begin(), obj.mutable_data()->end()}});
+
+        if (obj.mod_type() != org::xrpl::rpc::v1::RawLedgerObject::MODIFIED)
+        {
+            if (rawData.object_neighbors_included())
+            {
+                std::string* predPtr = obj.mutable_predecessor();
+                if (!predPtr->size())
+                {
+                    ripple::uint256 zero;
+                    *predPtr = uint256ToString(zero);
+                }
+                std::string* succPtr = obj.mutable_successor();
+                if (!succPtr->size())
+                {
+                    ripple::uint256 ff;
+                    ff--;
+                    *succPtr = uint256ToString(ff);
+                }
+
+                if (obj.mod_type() ==
+                    org::xrpl::rpc::v1::RawLedgerObject::DELETED)
+                {
+                    backend_->writeSuccessor(
+                        std::move(*predPtr), lgrInfo.seq, std::move(*succPtr));
+                }
+                else
+                {
+                    backend_->writeSuccessor(
+                        std::move(*predPtr),
+                        lgrInfo.seq,
+                        std::move(std::string{obj.key()}));
+                    backend_->writeSuccessor(
+                        std::move(std::string{obj.key()}),
+                        lgrInfo.seq,
+                        std::move(*succPtr));
+                }
+            }
+        }
 
         backend_->writeLedgerObject(
             std::move(*obj.mutable_key()),
@@ -283,6 +321,55 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
             std::move(*obj.mutable_data()));
     }
     backend_->updateCache(cacheUpdates, lgrInfo.seq);
+    if (!rawData.object_neighbors_included())
+    {
+        std::sort(
+            cacheUpdates.begin(),
+            cacheUpdates.end(),
+            [](auto const& a, auto const& b) { return a.first < b.first; });
+
+        ripple::uint256 lb;
+        lb--;
+        ripple::uint256 ub;
+        for (auto const& obj : cacheUpdates)
+        {
+            if (lb < obj.first && obj.first < ub)
+                continue;
+            if (obj.first != ub)
+            {
+                auto fetched =
+                    backend_->cache().getPredecessor(obj.first, lgrInfo.seq);
+                if (fetched)
+                    lb = fetched->first;
+                else
+                    lb = {};
+            }
+            auto fetched = backend_->fetchSuccessor(obj.first, lgrInfo.seq);
+            if (fetched)
+                ub = fetched->key;
+            else
+            {
+                ub = {};
+                ub = ~ub;
+            }
+            if (obj.second.size() == 0)
+            {
+                backend_->writeSuccessor(
+                    uint256ToString(lb), lgrInfo.seq, uint256ToString(ub));
+            }
+            else
+            {
+                backend_->writeSuccessor(
+                    uint256ToString(lb),
+                    lgrInfo.seq,
+                    uint256ToString(obj.first));
+                backend_->writeSuccessor(
+                    uint256ToString(obj.first),
+                    lgrInfo.seq,
+                    uint256ToString(ub));
+            }
+        }
+    }
 
     BOOST_LOG_TRIVIAL(debug)
         << __func__ << " : "

@@ -7,6 +7,19 @@
 #include <backend/DBHelpers.h>
 class ReportingETL;
 class AsyncCallData;
+/*
+class PlainETLSource;
+class SslETLSource;
+
+template <class T>
+class ETLSourceImpl;
+
+template <>
+class ETLSourceImpl<PlainETLSource>;
+
+template <>
+class ETLSourceImpl<SslETLSource>;
+*/
 class BackendTest_Basic_Test;
 namespace Backend {
 
@@ -101,6 +114,13 @@ public:
     // results in a timeout, an error is returned to the client
 public:
     // *** ledger methods
+    //
+
+    Cache const&
+    cache()
+    {
+        return cache_;
+    }
 
     virtual std::optional<ripple::LedgerInfo>
     fetchLedgerBySequence(uint32_t sequence) const = 0;
@@ -159,8 +179,7 @@ public:
         std::uint32_t limit,
         std::uint32_t limitHint = 0) const;
 
-    // Fetches the successor to key/index. key need not actually be a valid
-    // key/index.
+    // Fetches the successor to key/index
     std::optional<LedgerObject>
     fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence) const;
 
@@ -178,11 +197,16 @@ public:
     std::optional<KeyIndex>
     getKeyIndexOfSeq(uint32_t seq) const;
 
+    virtual void
+    writeSuccessor(std::string&& key, uint32_t seq, std::string&& successor)
+        const = 0;
+
     // *** protected write methods
 protected:
     friend class ::ReportingETL;
     friend class BackendIndexer;
     friend class ::AsyncCallData;
+
     friend std::shared_ptr<BackendInterface>
     make_Backend(boost::json::object const& config);
     friend class ::BackendTest_Basic_Test;

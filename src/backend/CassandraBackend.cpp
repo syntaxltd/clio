@@ -165,6 +165,26 @@ CassandraBackend::doWriteLedgerObject(
         });
 }
 void
+CassandraBackend::writeSuccessor(
+    std::string&& key,
+    uint32_t seq,
+    std::string&& successor) const
+{
+    BOOST_LOG_TRIVIAL(trace) << "Writing successor to cassandra";
+    makeAndExecuteAsyncWrite(
+        this,
+        std::move(std::make_tuple(std::move(key), seq, std::move(successor))),
+        [this](auto& params) {
+            auto& [key, sequence, successor] = params.data;
+
+            CassandraStatement statement{insertSuccessor_};
+            statement.bindNextBytes(key);
+            statement.bindNextInt(sequence);
+            statement.bindNextBytes(successor);
+            return statement;
+        });
+}
+void
 CassandraBackend::writeLedger(
     ripple::LedgerInfo const& ledgerInfo,
     std::string&& header,
@@ -524,6 +544,7 @@ CassandraBackend::doFetchLedgerPage(
     std::uint32_t ledgerSequence,
     std::uint32_t limit) const
 {
+    /*
     std::optional<ripple::uint256> cursor = cursorIn;
     auto index = getKeyIndexOfSeq(ledgerSequence);
     if (!index)
@@ -595,7 +616,7 @@ CassandraBackend::doFetchLedgerPage(
     }
     if (!cursor)
         return {{}, {}, "Data may be incomplete"};
-
+*/
     return {};
 }
 std::vector<Blob>
@@ -645,6 +666,7 @@ CassandraBackend::writeKeys(
     KeyIndex const& index,
     bool isAsync) const
 {
+    /*
     auto bind = [this](auto& params) {
         auto& [lgrSeq, key] = params.data;
         CassandraStatement statement{insertKey_};
@@ -694,6 +716,7 @@ CassandraBackend::writeKeys(
 
     std::unique_lock<std::mutex> lck(mtx);
     cv.wait(lck, [&numOutstanding]() { return numOutstanding == 0; });
+    */
     return true;
 }
 
@@ -1093,16 +1116,15 @@ CassandraBackend::open(bool readOnly)
             continue;
 
         query.str("");
-        query << "CREATE TABLE IF NOT EXISTS " << tablePrefix << "keys"
-              << " ( sequence bigint, first_byte blob, key blob, PRIMARY KEY "
-                 "((sequence,first_byte), key))"
+        query << "CREATE TABLE IF NOT EXISTS " << tablePrefix << "successor"
+              << " (key blob, seq bigint, next blob, PRIMARY KEY (key, seq) "
                  " WITH default_time_to_live = "
               << std::to_string(keysTtl);
         if (!executeSimpleStatement(query.str()))
             continue;
 
         query.str("");
-        query << "SELECT * FROM " << tablePrefix << "keys"
+        query << "SELECT * FROM " << tablePrefix << "successor"
               << " LIMIT 1";
         if (!executeSimpleStatement(query.str()))
             continue;
@@ -1191,16 +1213,15 @@ CassandraBackend::open(bool readOnly)
             continue;
 
         query.str("");
-        query << "INSERT INTO " << tablePrefix << "keys"
-              << " (sequence,first_byte, key) VALUES (?, ?, ?)";
-        if (!insertKey_.prepareStatement(query, session_.get()))
+        query << "INSERT INTO " << tablePrefix << "successor"
+              << " (key,seq,next) VALUES (?, ?, ?)";
+        if (!insertSuccessor_.prepareStatement(query, session_.get()))
             continue;
 
         query.str("");
-        query << "SELECT key FROM " << tablePrefix << "keys"
-              << " WHERE sequence = ? AND first_byte = ? AND key >= ? ORDER BY "
-                 "key ASC LIMIT ?";
-        if (!selectKeys_.prepareStatement(query, session_.get()))
+        query << "SELECT next FROM " << tablePrefix << "successor"
+              << " WHERE key = ? AND seq <= ? ORDER BY seq DESC LIMIT 1";
+        if (!selectSuccessor_.prepareStatement(query, session_.get()))
             continue;
 
         query.str("");

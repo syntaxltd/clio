@@ -9,6 +9,8 @@ class PostgresBackend : public BackendInterface
 private:
     mutable size_t numRowsInObjectsBuffer_ = 0;
     mutable std::stringstream objectsBuffer_;
+    mutable size_t numRowsInSuccessorBuffer_ = 0;
+    mutable std::stringstream successorBuffer_;
     mutable std::stringstream keysBuffer_;
     mutable std::stringstream transactionsBuffer_;
     mutable std::stringstream accountTxBuffer_;
@@ -77,6 +79,10 @@ public:
 
     void
     doWriteLedgerObject(std::string&& key, uint32_t seq, std::string&& blob)
+        const override;
+
+    void
+    writeSuccessor(std::string&& key, uint32_t seq, std::string&& successor)
         const override;
 
     void
