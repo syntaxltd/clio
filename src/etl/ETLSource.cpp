@@ -685,7 +685,10 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
 
 template <class Derived>
 std::pair<grpc::Status, org::xrpl::rpc::v1::GetLedgerResponse>
-ETLSourceImpl<Derived>::fetchLedger(uint32_t ledgerSequence, bool getObjects)
+ETLSourceImpl<Derived>::fetchLedger(
+    uint32_t ledgerSequence,
+    bool getObjects,
+    bool getObjectNeighbors)
 {
     org::xrpl::rpc::v1::GetLedgerResponse response;
     if (!stub_)
@@ -698,6 +701,7 @@ ETLSourceImpl<Derived>::fetchLedger(uint32_t ledgerSequence, bool getObjects)
     request.set_transactions(true);
     request.set_expand(true);
     request.set_get_objects(getObjects);
+    request.set_get_object_neighbors(getObjectNeighbors);
     request.set_user("ETL");
     grpc::Status status = stub_->GetLedger(&context, request, &response);
     if (status.ok() && !response.is_unlimited())
@@ -754,13 +758,17 @@ ETLLoadBalancer::loadInitialLedger(uint32_t sequence, bool cacheOnly)
 }
 
 std::optional<org::xrpl::rpc::v1::GetLedgerResponse>
-ETLLoadBalancer::fetchLedger(uint32_t ledgerSequence, bool getObjects)
+ETLLoadBalancer::fetchLedger(
+    uint32_t ledgerSequence,
+    bool getObjects,
+    bool getObjectNeighbors)
 {
     org::xrpl::rpc::v1::GetLedgerResponse response;
     bool success = execute(
-        [&response, ledgerSequence, getObjects, this](auto& source) {
-            auto [status, data] =
-                source->fetchLedger(ledgerSequence, getObjects);
+        [&response, ledgerSequence, getObjects, getObjectNeighbors, this](
+            auto& source) {
+            auto [status, data] = source->fetchLedger(
+                ledgerSequence, getObjects, getObjectNeighbors);
             response = std::move(data);
             if (status.ok() && (response.validated() || true))
             {

@@ -111,6 +111,7 @@ ReportingETL::loadInitialLedger(uint32_t startingSequence)
     // consumes from the queue and inserts the data into the Ledger object.
     // Once the below call returns, all data has been pushed into the queue
     loadBalancer_->loadInitialLedger(startingSequence);
+    cacheFull_ = true;
     BOOST_LOG_TRIVIAL(debug) << __func__ << " loaded initial ledger";
 
     if (!stopping_)
@@ -228,7 +229,7 @@ ReportingETL::fetchLedgerData(uint32_t idx)
         << "Attempting to fetch ledger with sequence = " << idx;
 
     std::optional<org::xrpl::rpc::v1::GetLedgerResponse> response =
-        loadBalancer_->fetchLedger(idx, false);
+        loadBalancer_->fetchLedger(idx, false, false);
     BOOST_LOG_TRIVIAL(trace) << __func__ << " : "
                              << "GetLedger reply = " << response->DebugString();
     return response;
@@ -242,7 +243,7 @@ ReportingETL::fetchLedgerDataAndDiff(uint32_t idx)
         << "Attempting to fetch ledger with sequence = " << idx;
 
     std::optional<org::xrpl::rpc::v1::GetLedgerResponse> response =
-        loadBalancer_->fetchLedger(idx, true);
+        loadBalancer_->fetchLedger(idx, true, !cacheFull_);
     BOOST_LOG_TRIVIAL(trace) << __func__ << " : "
                              << "GetLedger reply = " << response->DebugString();
     return response;
@@ -597,6 +598,7 @@ ReportingETL::monitor()
         std::thread t{[this, latestSequence]() {
             BOOST_LOG_TRIVIAL(info) << "Loading cache";
             loadBalancer_->loadInitialLedger(*latestSequence, true);
+            cacheFull_ = true;
         }};
     }
     if (!latestSequence)
@@ -676,6 +678,7 @@ ReportingETL::monitorReadOnly()
     std::thread t{[this, sequence]() {
         BOOST_LOG_TRIVIAL(info) << "Loading cache";
         loadBalancer_->loadInitialLedger(sequence, true);
+        cacheFull_ = true;
     }};
     while (!stopping_ &&
            networkValidatedLedgers_->waitUntilValidatedByNetwork(sequence))

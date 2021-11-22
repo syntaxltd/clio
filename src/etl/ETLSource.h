@@ -44,7 +44,10 @@ public:
     hasLedger(uint32_t sequence) const = 0;
 
     virtual std::pair<grpc::Status, org::xrpl::rpc::v1::GetLedgerResponse>
-    fetchLedger(uint32_t ledgerSequence, bool getObjects = true) = 0;
+    fetchLedger(
+        uint32_t ledgerSequence,
+        bool getObjects = true,
+        bool getObjectNeighbors = false) = 0;
 
     virtual bool
     loadInitialLedger(uint32_t ledgerSequence, bool cacheOnly = false) = 0;
@@ -244,7 +247,10 @@ public:
     /// and the prior one
     /// @return the extracted data and the result status
     std::pair<grpc::Status, org::xrpl::rpc::v1::GetLedgerResponse>
-    fetchLedger(uint32_t ledgerSequence, bool getObjects = true) override;
+    fetchLedger(
+        uint32_t ledgerSequence,
+        bool getObjects = true,
+        bool getObjectNeighbors = false) override;
 
     std::string
     toString() const override
@@ -509,7 +515,10 @@ public:
     /// was found in the database or the server is shutting down, the optional
     /// will be empty
     std::optional<org::xrpl::rpc::v1::GetLedgerResponse>
-    fetchLedger(uint32_t ledgerSequence, bool getObjects);
+    fetchLedger(
+        uint32_t ledgerSequence,
+        bool getObjects,
+        bool getObjectNeighbors);
 
     /// Determine whether messages received on the transactions_proposed stream
     /// should be forwarded to subscribing clients. The server subscribes to

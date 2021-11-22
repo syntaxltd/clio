@@ -78,6 +78,8 @@ private:
     // deletion
     std::atomic_bool deleting_ = false;
 
+    std::atomic_bool cacheFull_ = false;
+
     /// Used to determine when to write to the database during the initial
     /// ledger download. By default, the software downloads an entire ledger and
     /// then writes to the database. If flushInterval_ is non-zero, the software
