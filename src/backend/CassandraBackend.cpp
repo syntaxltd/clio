@@ -547,6 +547,45 @@ CassandraBackend::fetchAccountTransactions(
     }
     return {txns, {}};
 }
+std::optional<LedgerObject>
+CassandraBackend::fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
+    const
+{
+    BOOST_LOG_TRIVIAL(trace) << "Fetching from cassandra";
+    CassandraStatement statement{selectSuccessor_};
+    statement.bindNextBytes(key);
+    statement.bindNextInt(ledgerSequence);
+    CassandraResult result = executeSyncRead(statement);
+    if (!result)
+    {
+        BOOST_LOG_TRIVIAL(debug) << __func__ << " - no rows";
+        return {};
+    }
+    auto next = result.getUInt256();
+    auto obj = fetchLedgerObject(next, ledgerSequence);
+    assert(obj);
+    return {{next, *obj}};
+}
+std::optional<Blob>
+CassandraBackend::fetchLedgerObject(
+    ripple::uint256 const& key,
+    uint32_t sequence) const
+{
+    BOOST_LOG_TRIVIAL(trace) << "Fetching from cassandra";
+    CassandraStatement statement{selectObject_};
+    statement.bindNextBytes(key);
+    statement.bindNextInt(sequence);
+    CassandraResult result = executeSyncRead(statement);
+    if (!result)
+    {
+        BOOST_LOG_TRIVIAL(debug) << __func__ << " - no rows";
+        return {};
+    }
+    auto res = result.getBytes();
+    if (res.size())
+        return res;
+    return {};
+}
 
 LedgerPage
 CassandraBackend::doFetchLedgerPage(

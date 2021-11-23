@@ -358,6 +358,28 @@ PostgresBackend::fetchAllTransactionHashesInLedger(
     }
     return {};
 }
+std::optional<LedgerObject>
+PostgresBackend::fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
+    const
+{
+    PgQuery pgQuery(pgPool_);
+    pgQuery("SET statement_timeout TO 10000");
+    std::stringstream sql;
+    sql << "SELECT next FROM successor WHERE key = "
+        << "\'\\x" << ripple::strHex(key) << "\'"
+        << " AND ledger_seq <= " << std::to_string(ledgerSequence)
+        << " ORDER BY ledger_seq DESC LIMIT 1";
+    auto res = pgQuery(sql.str().data());
+    if (checkResult(res, 1))
+    {
+        auto next = res.asUInt256(0, 0);
+        auto obj = fetchLedgerObject(next, ledgerSequence);
+        assert(obj);
+        return {{next, *obj}};
+    }
+
+    return {};
+}
 
 LedgerPage
 PostgresBackend::doFetchLedgerPage(

@@ -144,23 +144,6 @@ BackendInterface::fetchBookOffers(
     return page;
 }
 
-std::optional<LedgerObject>
-BackendInterface::fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
-    const
-{
-    auto start = std::chrono::system_clock::now();
-    auto page = fetchLedgerPage({++key}, ledgerSequence, 1, 512);
-    auto end = std::chrono::system_clock::now();
-
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
-                  .count();
-    BOOST_LOG_TRIVIAL(debug)
-        << __func__ << " took " << std::to_string(ms) << " milliseconds";
-    if (page.objects.size())
-        return page.objects[0];
-    return {};
-}
-
 LedgerPage
 BackendInterface::fetchLedgerPage(
     std::optional<ripple::uint256> const& cursor,

@@ -828,7 +828,7 @@ create table if not exists account_transactions7 partition of account_transactio
 
 CREATE TABLE IF NOT EXISTS successor (
     key bytea NOT NULL, 
-    seq bigint NOT NULL,
+    ledger_seq bigint NOT NULL,
     next bytea NOT NULL,
     PRIMARY KEY(key, seq)
 );

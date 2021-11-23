@@ -740,23 +740,7 @@ public:
     // sequence
     std::optional<Blob>
     fetchLedgerObject(ripple::uint256 const& key, uint32_t sequence)
-        const override
-    {
-        BOOST_LOG_TRIVIAL(trace) << "Fetching from cassandra";
-        CassandraStatement statement{selectObject_};
-        statement.bindNextBytes(key);
-        statement.bindNextInt(sequence);
-        CassandraResult result = executeSyncRead(statement);
-        if (!result)
-        {
-            BOOST_LOG_TRIVIAL(debug) << __func__ << " - no rows";
-            return {};
-        }
-        auto res = result.getBytes();
-        if (res.size())
-            return res;
-        return {};
-    }
+        const override;
 
     std::optional<int64_t>
     getToken(void const* key) const
@@ -795,6 +779,9 @@ public:
              result.getUInt32(),
              result.getUInt32()}};
     }
+    std::optional<LedgerObject>
+    fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence) const override;
+
     LedgerPage
     doFetchLedgerPage(
         std::optional<ripple::uint256> const& cursor,

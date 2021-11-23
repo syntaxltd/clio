@@ -52,6 +52,9 @@ public:
     std::optional<LedgerRange>
     hardFetchLedgerRange() const override;
 
+    std::optional<LedgerObject>
+    fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence) const override;
+
     LedgerPage
     doFetchLedgerPage(
         std::optional<ripple::uint256> const& cursor,

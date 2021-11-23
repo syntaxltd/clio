@@ -122,8 +122,8 @@ public:
         std::uint32_t limitHint = 0) const;
 
     // Fetches the successor to key/index
-    std::optional<LedgerObject>
-    fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence) const;
+    virtual std::optional<LedgerObject>
+    fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence) const = 0;
 
     BookOffersPage
     fetchBookOffers(
