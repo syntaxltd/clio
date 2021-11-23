@@ -151,15 +151,16 @@ CassandraBackend::doWriteLedgerObject(
     std::string&& blob) const
 {
     BOOST_LOG_TRIVIAL(trace) << "Writing ledger object to cassandra";
-    makeAndExecuteAsyncWrite(
-        this, std::move(std::make_tuple(seq, key)), [this](auto& params) {
-            auto& [sequence, key] = params.data;
+    if (!isFirst_)
+        makeAndExecuteAsyncWrite(
+            this, std::move(std::make_tuple(seq, key)), [this](auto& params) {
+                auto& [sequence, key] = params.data;
 
-            CassandraStatement statement{insertDiff_};
-            statement.bindNextInt(sequence);
-            statement.bindNextBytes(key);
-            return statement;
-        });
+                CassandraStatement statement{insertDiff_};
+                statement.bindNextInt(sequence);
+                statement.bindNextBytes(key);
+                return statement;
+            });
     makeAndExecuteAsyncWrite(
         this,
         std::move(std::make_tuple(std::move(key), seq, std::move(blob))),
