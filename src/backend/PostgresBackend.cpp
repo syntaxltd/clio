@@ -365,6 +365,7 @@ PostgresBackend::doFetchLedgerPage(
     std::uint32_t ledgerSequence,
     std::uint32_t limit) const
 {
+    /*
     auto index = getKeyIndexOfSeq(ledgerSequence);
     if (!index)
         return {};
@@ -408,6 +409,7 @@ PostgresBackend::doFetchLedgerPage(
     }
     if (!cursor)
         return {{}, {}, "Data may be incomplete"};
+        */
     return {};
 }
 
@@ -713,71 +715,7 @@ PostgresBackend::doFinishWrites() const
     numRowsInObjectsBuffer_ = 0;
     return !abortWrite_;
 }
-bool
-PostgresBackend::writeKeys(
-    std::unordered_set<ripple::uint256> const& keys,
-    KeyIndex const& index,
-    bool isAsync) const
-{
-    if (abortWrite_)
-        return false;
-    PgQuery pgQuery(pgPool_);
-    PgQuery& conn = isAsync ? pgQuery : writeConnection_;
-    std::stringstream sql;
-    size_t numRows = 0;
-    for (auto& key : keys)
-    {
-        numRows++;
-        sql << "INSERT INTO keys (ledger_seq, key) VALUES ("
-            << std::to_string(index.keyIndex) << ", \'\\x"
-            << ripple::strHex(key) << "\') ON CONFLICT DO NOTHING; ";
-        if (numRows > 10000)
-        {
-            conn(sql.str().c_str());
-            sql.str("");
-            sql.clear();
-            numRows = 0;
-        }
-    }
-    if (numRows > 0)
-        conn(sql.str().c_str());
-    return true;
-    /*
-    BOOST_LOG_TRIVIAL(debug) << __func__;
-    std::condition_variable cv;
-    std::mutex mtx;
-    std::atomic_uint numRemaining = keys.size();
-    auto start = std::chrono::system_clock::now();
-    for (auto& key : keys)
-    {
-        boost::asio::post(
-            pool_, [this, key, &numRemaining, &cv, &mtx, &index]() {
-                PgQuery pgQuery(pgPool_);
-                std::stringstream sql;
-                sql << "INSERT INTO keys (ledger_seq, key) VALUES ("
-                    << std::to_string(index.keyIndex) << ", \'\\x"
-                    << ripple::strHex(key) << "\') ON CONFLICT DO NOTHING";
 
-                auto res = pgQuery(sql.str().data());
-                if (--numRemaining == 0)
-                {
-                    std::unique_lock lck(mtx);
-                    cv.notify_one();
-                }
-            });
-    }
-    std::unique_lock lck(mtx);
-    cv.wait(lck, [&numRemaining]() { return numRemaining == 0; });
-    auto end = std::chrono::system_clock::now();
-    auto duration =
-        std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
-            .count();
-    BOOST_LOG_TRIVIAL(info)
-        << __func__ << " wrote " << std::to_string(keys.size())
-        << " keys with threadpool. took " << std::to_string(duration);
-        */
-    return true;
-}
 bool
 PostgresBackend::doOnlineDelete(uint32_t numLedgersToKeep) const
 {

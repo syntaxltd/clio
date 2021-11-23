@@ -69,7 +69,6 @@ target_sources(clio PRIVATE
   ## Backend
   src/backend/CassandraBackend.cpp
   src/backend/PostgresBackend.cpp
-  src/backend/BackendIndexer.cpp
   src/backend/BackendInterface.cpp
   src/backend/Pg.cpp
   src/backend/DBHelpers.cpp

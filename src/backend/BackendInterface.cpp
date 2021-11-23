@@ -5,14 +5,9 @@ namespace Backend {
 bool
 BackendInterface::finishWrites(uint32_t ledgerSequence)
 {
-    indexer_.finish(ledgerSequence, *this);
     auto commitRes = doFinishWrites();
     if (commitRes)
     {
-        if (isFirst_)
-            indexer_.doKeysRepairAsync(*this, ledgerSequence);
-        if (indexer_.isKeyFlagLedger(ledgerSequence))
-            indexer_.writeKeyFlagLedgerAsync(ledgerSequence, *this);
         isFirst_ = false;
         updateRange(ledgerSequence);
     }
@@ -25,17 +20,6 @@ BackendInterface::finishWrites(uint32_t ledgerSequence)
     }
     return commitRes;
 }
-bool
-BackendInterface::isLedgerIndexed(std::uint32_t ledgerSequence) const
-{
-    auto keyIndex = getKeyIndexOfSeq(ledgerSequence);
-    if (keyIndex)
-    {
-        auto page = doFetchLedgerPage({}, ledgerSequence, 1);
-        return !page.warning.has_value();
-    }
-    return false;
-}
 void
 BackendInterface::writeLedgerObject(
     std::string&& key,
@@ -44,7 +28,6 @@ BackendInterface::writeLedgerObject(
 {
     assert(key.size() == sizeof(ripple::uint256));
     ripple::uint256 key256 = ripple::uint256::fromVoid(key.data());
-    indexer_.addKey(std::move(key256));
     doWriteLedgerObject(std::move(key), seq, std::move(blob));
 }
 void
@@ -69,18 +52,6 @@ BackendInterface::hardFetchLedgerRangeNoThrow() const
             ;
         }
     }
-}
-std::optional<KeyIndex>
-BackendInterface::getKeyIndexOfSeq(uint32_t seq) const
-{
-    if (indexer_.isKeyFlagLedger(seq))
-        return KeyIndex{seq};
-    auto rng = fetchLedgerRange();
-    if (!rng)
-        return {};
-    if (rng->minSequence == seq)
-        return KeyIndex{seq};
-    return indexer_.getKeyIndexOfSeq(seq);
 }
 BookOffersPage
 BackendInterface::fetchBookOffers(
@@ -189,6 +160,7 @@ BackendInterface::fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
         return page.objects[0];
     return {};
 }
+
 LedgerPage
 BackendInterface::fetchLedgerPage(
     std::optional<ripple::uint256> const& cursor,
@@ -196,6 +168,7 @@ BackendInterface::fetchLedgerPage(
     std::uint32_t limit,
     std::uint32_t limitHint) const
 {
+    /*
     assert(limit != 0);
     bool incomplete = !isLedgerIndexed(ledgerSequence);
     BOOST_LOG_TRIVIAL(debug) << __func__ << " incomplete = " << incomplete;
@@ -289,65 +262,8 @@ BackendInterface::fetchLedgerPage(
             page.cursor = page.objects.back().key;
     }
     return page;
-}
-
-void
-BackendInterface::checkFlagLedgers() const
-{
-    auto rng = hardFetchLedgerRangeNoThrow();
-    if (rng)
-    {
-        bool prevComplete = true;
-        uint32_t cur = rng->minSequence;
-        size_t numIncomplete = 0;
-        while (cur <= rng->maxSequence + 1)
-        {
-            auto keyIndex = getKeyIndexOfSeq(cur);
-            assert(keyIndex.has_value());
-            cur = keyIndex->keyIndex;
-
-            if (!isLedgerIndexed(cur))
-            {
-                BOOST_LOG_TRIVIAL(warning)
-                    << __func__ << " - flag ledger "
-                    << std::to_string(keyIndex->keyIndex) << " is incomplete";
-                ++numIncomplete;
-                prevComplete = false;
-            }
-            else
-            {
-                if (!prevComplete)
-                {
-                    BOOST_LOG_TRIVIAL(fatal)
-                        << __func__ << " - flag ledger "
-                        << std::to_string(keyIndex->keyIndex)
-                        << " is incomplete but the next is complete. This "
-                           "should never happen";
-                    assert(false);
-                    throw std::runtime_error("missing prev flag ledger");
-                }
-                prevComplete = true;
-                BOOST_LOG_TRIVIAL(info)
-                    << __func__ << " - flag ledger "
-                    << std::to_string(keyIndex->keyIndex) << " is complete";
-            }
-            cur = cur + 1;
-        }
-        if (numIncomplete > 1)
-        {
-            BOOST_LOG_TRIVIAL(warning)
-                << __func__ << " " << std::to_string(numIncomplete)
-                << " incomplete flag ledgers. "
-                   "This can happen, but is unlikely. Check indexer_key_shift "
-                   "in config";
-        }
-        else
-        {
-            BOOST_LOG_TRIVIAL(info)
-                << __func__ << " number of incomplete flag ledgers = "
-                << std::to_string(numIncomplete);
-        }
-    }
+    */
+    return {};
 }
 
 std::optional<ripple::Fees>

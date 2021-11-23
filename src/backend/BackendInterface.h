@@ -2,7 +2,6 @@
 #define RIPPLE_APP_REPORTING_BACKENDINTERFACE_H_INCLUDED
 #include <ripple/ledger/ReadView.h>
 #include <boost/asio.hpp>
-#include <backend/BackendIndexer.h>
 #include <backend/Cache.h>
 #include <backend/DBHelpers.h>
 #include <backend/Types.h>
@@ -36,23 +35,16 @@ class DatabaseTimeout : public std::exception
 class BackendInterface
 {
 protected:
-    mutable BackendIndexer indexer_;
     mutable bool isFirst_ = true;
     mutable std::optional<LedgerRange> range;
     mutable Cache cache_;
 
 public:
-    BackendInterface(boost::json::object const& config) : indexer_(config)
+    BackendInterface(boost::json::object const& config)
     {
     }
     virtual ~BackendInterface()
     {
-    }
-
-    BackendIndexer&
-    getIndexer() const
-    {
-        return indexer_;
     }
 
     // *** public read methods ***
@@ -140,13 +132,6 @@ public:
         std::uint32_t limit,
         std::optional<ripple::uint256> const& cursor = {}) const;
 
-    // Methods related to the indexer
-    bool
-    isLedgerIndexed(std::uint32_t ledgerSequence) const;
-
-    std::optional<KeyIndex>
-    getKeyIndexOfSeq(uint32_t seq) const;
-
     virtual void
     writeSuccessor(std::string&& key, uint32_t seq, std::string&& successor)
         const = 0;
@@ -200,14 +185,6 @@ protected:
     writeAccountTransactions(
         std::vector<AccountTransactionsData>&& data) const = 0;
 
-    // TODO: this function, or something similar, could be called internally by
-    // writeLedgerObject
-    virtual bool
-    writeKeys(
-        std::unordered_set<ripple::uint256> const& keys,
-        KeyIndex const& index,
-        bool isAsync = false) const = 0;
-
     // Tell the database we are about to begin writing data for a particular
     // ledger.
     virtual void
@@ -245,9 +222,6 @@ private:
 
     virtual bool
     doFinishWrites() const = 0;
-
-    void
-    checkFlagLedgers() const;
 };
 
 }  // namespace Backend

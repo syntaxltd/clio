@@ -707,66 +707,6 @@ CassandraBackend::fetchLedgerDiff(uint32_t ledgerSequence) const
 }
 
 bool
-CassandraBackend::writeKeys(
-    std::unordered_set<ripple::uint256> const& keys,
-    KeyIndex const& index,
-    bool isAsync) const
-{
-    /*
-    auto bind = [this](auto& params) {
-        auto& [lgrSeq, key] = params.data;
-        CassandraStatement statement{insertKey_};
-        statement.bindNextInt(lgrSeq);
-        statement.bindNextBytes(key.data(), 1);
-        statement.bindNextBytes(key);
-        return statement;
-    };
-    std::atomic_int numOutstanding = 0;
-    std::condition_variable cv;
-    std::mutex mtx;
-    std::vector<std::shared_ptr<BulkWriteCallbackData<
-        std::pair<uint32_t, ripple::uint256>,
-        typename std::remove_reference<decltype(bind)>::type>>>
-        cbs;
-    cbs.reserve(keys.size());
-    uint32_t concurrentLimit =
-        isAsync ? indexerMaxRequestsOutstanding : maxRequestsOutstanding;
-    BOOST_LOG_TRIVIAL(debug)
-        << __func__ << " Ledger = " << std::to_string(index.keyIndex)
-        << " . num keys = " << std::to_string(keys.size())
-        << " . concurrentLimit = "
-        << std::to_string(indexerMaxRequestsOutstanding);
-    uint32_t numSubmitted = 0;
-    for (auto& key : keys)
-    {
-        cbs.push_back(makeAndExecuteBulkAsyncWrite(
-            this,
-            std::make_pair(index.keyIndex, std::move(key)),
-            bind,
-            numOutstanding,
-            mtx,
-            cv));
-        ++numOutstanding;
-        ++numSubmitted;
-        std::unique_lock<std::mutex> lck(mtx);
-        cv.wait(lck, [&numOutstanding, concurrentLimit, &keys]() {
-            // keys.size() - i is number submitted. keys.size() -
-            // numRemaining is number completed Difference is num
-            // outstanding
-            return numOutstanding < concurrentLimit;
-        });
-        if (numSubmitted % 100000 == 0)
-            BOOST_LOG_TRIVIAL(debug)
-                << __func__ << " Submitted " << std::to_string(numSubmitted);
-    }
-
-    std::unique_lock<std::mutex> lck(mtx);
-    cv.wait(lck, [&numOutstanding]() { return numOutstanding == 0; });
-    */
-    return true;
-}
-
-bool
 CassandraBackend::doOnlineDelete(uint32_t numLedgersToKeep) const
 {
     // calculate TTL
@@ -1040,17 +980,8 @@ CassandraBackend::open(bool readOnly)
     cass_cluster_set_connect_timeout(cluster, 10000);
 
     int ttl = getInt("ttl") ? *getInt("ttl") * 2 : 0;
-    int keysTtl = (ttl != 0 ? pow(2, indexer_.getKeyShift()) * 4 * 2 : 0);
-    int incr = keysTtl;
-    while (keysTtl < ttl)
-    {
-        keysTtl += incr;
-    }
-    int booksTtl = 0;
     BOOST_LOG_TRIVIAL(info)
-        << __func__ << " setting ttl to " << std::to_string(ttl)
-        << " , books ttl to " << std::to_string(booksTtl) << " , keys ttl to "
-        << std::to_string(keysTtl);
+        << __func__ << " setting ttl to " << std::to_string(ttl);
 
     auto executeSimpleStatement = [this](std::string const& query) {
         CassStatement* statement = makeStatement(query.c_str(), 0);
@@ -1165,7 +1096,7 @@ CassandraBackend::open(bool readOnly)
         query << "CREATE TABLE IF NOT EXISTS " << tablePrefix << "successor"
               << " (key blob, seq bigint, next blob, PRIMARY KEY (key, seq) "
                  " WITH default_time_to_live = "
-              << std::to_string(keysTtl);
+              << std::to_string(ttl);
         if (!executeSimpleStatement(query.str()))
             continue;
 
@@ -1178,7 +1109,7 @@ CassandraBackend::open(bool readOnly)
         query << "CREATE TABLE IF NOT EXISTS " << tablePrefix << "diff"
               << " (seq bigint, key blob, PRIMARY KEY (seq, key) "
                  " WITH default_time_to_live = "
-              << std::to_string(keysTtl);
+              << std::to_string(ttl);
         if (!executeSimpleStatement(query.str()))
             continue;
 

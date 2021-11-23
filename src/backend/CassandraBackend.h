@@ -801,12 +801,6 @@ public:
         std::uint32_t ledgerSequence,
         std::uint32_t limit) const override;
 
-    bool
-    writeKeys(
-        std::unordered_set<ripple::uint256> const& keys,
-        KeyIndex const& index,
-        bool isAsync = false) const override;
-
     std::vector<TransactionAndMetadata>
     fetchTransactions(
         std::vector<ripple::uint256> const& hashes) const override;

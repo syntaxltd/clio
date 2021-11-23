@@ -114,11 +114,6 @@ public:
 
     bool
     doOnlineDelete(uint32_t numLedgersToKeep) const override;
-    bool
-    writeKeys(
-        std::unordered_set<ripple::uint256> const& keys,
-        KeyIndex const& index,
-        bool isAsync = false) const override;
 };
 }  // namespace Backend
 #endif
