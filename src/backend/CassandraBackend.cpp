@@ -152,6 +152,15 @@ CassandraBackend::doWriteLedgerObject(
 {
     BOOST_LOG_TRIVIAL(trace) << "Writing ledger object to cassandra";
     makeAndExecuteAsyncWrite(
+        this, std::move(std::make_tuple(seq, key)), [this](auto& params) {
+            auto& [sequence, key] = params.data;
+
+            CassandraStatement statement{insertDiff_};
+            statement.bindNextInt(sequence);
+            statement.bindNextBytes(key);
+            return statement;
+        });
+    makeAndExecuteAsyncWrite(
         this,
         std::move(std::make_tuple(std::move(key), seq, std::move(blob))),
         [this](auto& params) {
@@ -659,6 +668,43 @@ CassandraBackend::fetchLedgerObjects(
         << "Fetched " << numKeys << " records from Cassandra";
     return results;
 }
+std::vector<LedgerObject>
+CassandraBackend::fetchLedgerDiff(uint32_t ledgerSequence) const
+{
+    CassandraStatement statement{selectDiff_};
+    statement.bindNextInt(ledgerSequence);
+    auto start = std::chrono::system_clock::now();
+    CassandraResult result = executeSyncRead(statement);
+    auto end = std::chrono::system_clock::now();
+    if (!result)
+    {
+        BOOST_LOG_TRIVIAL(error)
+            << __func__
+            << " - no rows . ledger = " << std::to_string(ledgerSequence);
+        return {};
+    }
+    std::vector<ripple::uint256> keys;
+    do
+    {
+        keys.push_back(result.getUInt256());
+    } while (result.nextRow());
+    BOOST_LOG_TRIVIAL(debug)
+        << "Fetched " << keys.size() << " diff hashes from Cassandra in "
+        << std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
+               .count()
+        << " milliseconds";
+    auto objs = fetchLedgerObjects(keys, ledgerSequence);
+    std::vector<LedgerObject> results;
+    std::transform(
+        keys.begin(),
+        keys.end(),
+        objs.begin(),
+        std::back_inserter(results),
+        [](auto const& k, auto const& o) {
+            return LedgerObject{k, o};
+        });
+    return results;
+}
 
 bool
 CassandraBackend::writeKeys(
@@ -1129,6 +1175,19 @@ CassandraBackend::open(bool readOnly)
         if (!executeSimpleStatement(query.str()))
             continue;
         query.str("");
+        query << "CREATE TABLE IF NOT EXISTS " << tablePrefix << "diff"
+              << " (seq bigint, key blob, PRIMARY KEY (seq, key) "
+                 " WITH default_time_to_live = "
+              << std::to_string(keysTtl);
+        if (!executeSimpleStatement(query.str()))
+            continue;
+
+        query.str("");
+        query << "SELECT * FROM " << tablePrefix << "diff"
+              << " LIMIT 1";
+        if (!executeSimpleStatement(query.str()))
+            continue;
+        query.str("");
         query << "CREATE TABLE IF NOT EXISTS " << tablePrefix << "account_tx"
               << " ( account blob, idx int, seq_idx "
                  "tuple<bigint, bigint>, "
@@ -1219,9 +1278,21 @@ CassandraBackend::open(bool readOnly)
             continue;
 
         query.str("");
+        query << "INSERT INTO " << tablePrefix << "diff"
+              << " (seq,key) VALUES (?, ?)";
+        if (!insertDiff_.prepareStatement(query, session_.get()))
+            continue;
+
+        query.str("");
         query << "SELECT next FROM " << tablePrefix << "successor"
               << " WHERE key = ? AND seq <= ? ORDER BY seq DESC LIMIT 1";
         if (!selectSuccessor_.prepareStatement(query, session_.get()))
+            continue;
+
+        query.str("");
+        query << "SELECT key FROM " << tablePrefix << "diff"
+              << " WHERE seq = ?";
+        if (!selectDiff_.prepareStatement(query, session_.get()))
             continue;
 
         query.str("");

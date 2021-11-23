@@ -170,6 +170,9 @@ public:
         std::vector<ripple::uint256> const& keys,
         uint32_t sequence) const = 0;
 
+    virtual std::vector<LedgerObject>
+    fetchLedgerDiff(uint32_t ledgerSequence) const = 0;
+
     // Fetches a page of ledger objects, ordered by key/index.
     // Used by ledger_data
     LedgerPage

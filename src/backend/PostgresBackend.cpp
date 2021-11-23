@@ -550,6 +550,27 @@ PostgresBackend::fetchLedgerObjects(
         << " objects with threadpool. took " << std::to_string(duration);
     return results;
 }
+std::vector<LedgerObject>
+PostgresBackend::fetchLedgerDiff(uint32_t ledgerSequence) const
+{
+    PgQuery pgQuery(pgPool_);
+    pgQuery("SET statement_timeout TO 10000");
+    std::stringstream sql;
+    sql << "SELECT key,object FROM objects "
+           "WHERE "
+        << "ledger_seq = " << std::to_string(ledgerSequence);
+    auto res = pgQuery(sql.str().data());
+    if (size_t numRows = checkResult(res, 4))
+    {
+        std::vector<LedgerObject> objects;
+        for (size_t i = 0; i < numRows; ++i)
+        {
+            objects.push_back({res.asUInt256(i, 0), res.asUnHexedBlob(i, 1)});
+        }
+        return objects;
+    }
+    return {};
+}
 
 AccountTransactions
 PostgresBackend::fetchAccountTransactions(

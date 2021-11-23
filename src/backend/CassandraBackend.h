@@ -555,6 +555,8 @@ private:
     CassandraPreparedStatement getToken_;
     CassandraPreparedStatement insertSuccessor_;
     CassandraPreparedStatement selectSuccessor_;
+    CassandraPreparedStatement insertDiff_;
+    CassandraPreparedStatement selectDiff_;
     CassandraPreparedStatement insertAccountTx_;
     CassandraPreparedStatement selectAccountTx_;
     CassandraPreparedStatement selectAccountTxForward_;
@@ -813,6 +815,9 @@ public:
     fetchLedgerObjects(
         std::vector<ripple::uint256> const& keys,
         uint32_t sequence) const override;
+
+    std::vector<LedgerObject>
+    fetchLedgerDiff(uint32_t ledgerSequence) const override;
 
     void
     doWriteLedgerObject(std::string&& key, uint32_t seq, std::string&& blob)

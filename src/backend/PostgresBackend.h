@@ -46,6 +46,9 @@ public:
     std::vector<ripple::uint256>
     fetchAllTransactionHashesInLedger(uint32_t ledgerSequence) const override;
 
+    std::vector<LedgerObject>
+    fetchLedgerDiff(uint32_t ledgerSequence) const override;
+
     std::optional<LedgerRange>
     hardFetchLedgerRange() const override;
 
