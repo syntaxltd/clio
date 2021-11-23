@@ -33,7 +33,7 @@ public:
     fetchLedgerByHash(ripple::uint256 const& hash) const override;
 
     std::optional<Blob>
-    fetchLedgerObject(ripple::uint256 const& key, uint32_t sequence)
+    doFetchLedgerObject(ripple::uint256 const& key, uint32_t sequence)
         const override;
 
     // returns a transaction, metadata pair
@@ -53,20 +53,15 @@ public:
     hardFetchLedgerRange() const override;
 
     std::optional<LedgerObject>
-    fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence) const override;
-
-    LedgerPage
-    doFetchLedgerPage(
-        std::optional<ripple::uint256> const& cursor,
-        std::uint32_t ledgerSequence,
-        std::uint32_t limit) const override;
+    doFetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
+        const override;
 
     std::vector<TransactionAndMetadata>
     fetchTransactions(
         std::vector<ripple::uint256> const& hashes) const override;
 
     std::vector<Blob>
-    fetchLedgerObjects(
+    doFetchLedgerObjects(
         std::vector<ripple::uint256> const& keys,
         uint32_t sequence) const override;
 

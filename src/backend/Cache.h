@@ -26,6 +26,7 @@ class Cache
     std::vector<ripple::uint256> pendingDeletes_;
     std::vector<ripple::uint256> pendingSweeps_;
     mutable std::shared_mutex mtx_;
+    uint32_t mostRecentSequence_;
 
     void
     insert(ripple::uint256 const& key, Blob const& value, uint32_t seq);
@@ -61,10 +62,10 @@ public:
     std::optional<Blob>
     get(ripple::uint256 const& key, uint32_t seq) const;
 
-    std::optional<std::pair<ripple::uint256, Blob>>
+    std::optional<LedgerObject>
     getSuccessor(ripple::uint256 const& key, uint32_t seq) const;
 
-    std::optional<std::pair<ripple::uint256, Blob>>
+    std::optional<LedgerObject>
     getPredecessor(ripple::uint256 const& key, uint32_t seq) const;
 };
 

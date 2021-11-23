@@ -181,6 +181,11 @@ CassandraBackend::writeSuccessor(
     std::string&& successor) const
 {
     BOOST_LOG_TRIVIAL(trace) << "Writing successor to cassandra";
+    BOOST_LOG_TRIVIAL(debug)
+        << "Writing successor. key = " << key
+        << " seq = " << std::to_string(seq) << " successor = " << successor;
+    assert(key.size());
+    assert(successor.size());
     makeAndExecuteAsyncWrite(
         this,
         std::move(std::make_tuple(std::move(key), seq, std::move(successor))),
@@ -548,7 +553,7 @@ CassandraBackend::fetchAccountTransactions(
     return {txns, {}};
 }
 std::optional<LedgerObject>
-CassandraBackend::fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
+CassandraBackend::doFetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
     const
 {
     BOOST_LOG_TRIVIAL(trace) << "Fetching from cassandra";
@@ -562,12 +567,14 @@ CassandraBackend::fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
         return {};
     }
     auto next = result.getUInt256();
+    if (next == lastKey)
+        return {};
     auto obj = fetchLedgerObject(next, ledgerSequence);
     assert(obj);
     return {{next, *obj}};
 }
 std::optional<Blob>
-CassandraBackend::fetchLedgerObject(
+CassandraBackend::doFetchLedgerObject(
     ripple::uint256 const& key,
     uint32_t sequence) const
 {
@@ -587,89 +594,8 @@ CassandraBackend::fetchLedgerObject(
     return {};
 }
 
-LedgerPage
-CassandraBackend::doFetchLedgerPage(
-    std::optional<ripple::uint256> const& cursorIn,
-    std::uint32_t ledgerSequence,
-    std::uint32_t limit) const
-{
-    /*
-    std::optional<ripple::uint256> cursor = cursorIn;
-    auto index = getKeyIndexOfSeq(ledgerSequence);
-    if (!index)
-        return {};
-    LedgerPage page;
-    BOOST_LOG_TRIVIAL(debug)
-        << __func__ << " ledgerSequence = " << std::to_string(ledgerSequence)
-        << " index = " << std::to_string(index->keyIndex);
-    if (cursor)
-        BOOST_LOG_TRIVIAL(debug)
-            << __func__ << " - Cursor = " << ripple::strHex(*cursor);
-    CassandraStatement statement{selectKeys_};
-    statement.bindNextInt(index->keyIndex);
-    if (!cursor)
-    {
-        ripple::uint256 zero;
-        cursor = zero;
-    }
-    statement.bindNextBytes(cursor->data(), 1);
-    statement.bindNextBytes(*cursor);
-    statement.bindNextUInt(limit + 1);
-    CassandraResult result = executeSyncRead(statement);
-    if (!!result)
-    {
-        BOOST_LOG_TRIVIAL(debug)
-            << __func__ << " - got keys - size = " << result.numRows();
-
-        std::vector<ripple::uint256> keys;
-        do
-        {
-            keys.push_back(result.getUInt256());
-        } while (result.nextRow());
-
-        if (keys.size() && keys.size() >= limit)
-        {
-            page.cursor = keys.back();
-            ++(*page.cursor);
-        }
-        else if (cursor->data()[0] != 0xFF)
-        {
-            ripple::uint256 zero;
-            zero.data()[0] = cursor->data()[0] + 1;
-            page.cursor = zero;
-        }
-        auto objects = fetchLedgerObjects(keys, ledgerSequence);
-        if (objects.size() != keys.size())
-            throw std::runtime_error("Mismatch in size of objects and keys");
-
-        if (cursor)
-            BOOST_LOG_TRIVIAL(debug)
-                << __func__ << " Cursor = " << ripple::strHex(*page.cursor);
-
-        for (size_t i = 0; i < objects.size(); ++i)
-        {
-            auto& obj = objects[i];
-            auto& key = keys[i];
-            if (obj.size())
-            {
-                page.objects.push_back({std::move(key), std::move(obj)});
-            }
-        }
-
-        if (!cursorIn && (!keys.size() || !keys[0].isZero()))
-        {
-            page.warning = "Data may be incomplete";
-        }
-
-        return page;
-    }
-    if (!cursor)
-        return {{}, {}, "Data may be incomplete"};
-*/
-    return {};
-}
 std::vector<Blob>
-CassandraBackend::fetchLedgerObjects(
+CassandraBackend::doFetchLedgerObjects(
     std::vector<ripple::uint256> const& keys,
     uint32_t sequence) const
 {
@@ -1134,7 +1060,7 @@ CassandraBackend::open(bool readOnly)
 
         query.str("");
         query << "CREATE TABLE IF NOT EXISTS " << tablePrefix << "successor"
-              << " (key blob, seq bigint, next blob, PRIMARY KEY (key, seq) "
+              << " (key blob, seq bigint, next blob, PRIMARY KEY (key, seq)) "
                  " WITH default_time_to_live = "
               << std::to_string(ttl);
         if (!executeSimpleStatement(query.str()))
@@ -1147,7 +1073,7 @@ CassandraBackend::open(bool readOnly)
             continue;
         query.str("");
         query << "CREATE TABLE IF NOT EXISTS " << tablePrefix << "diff"
-              << " (seq bigint, key blob, PRIMARY KEY (seq, key) "
+              << " (seq bigint, key blob, PRIMARY KEY (seq, key)) "
                  " WITH default_time_to_live = "
               << std::to_string(ttl);
         if (!executeSimpleStatement(query.str()))

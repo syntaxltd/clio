@@ -271,6 +271,7 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
 
     std::vector<Backend::LedgerObject> cacheUpdates;
     cacheUpdates.reserve(rawData.ledger_objects().objects_size());
+    std::set<ripple::uint256> modified;
     for (auto& obj : *(rawData.mutable_ledger_objects()->mutable_objects()))
     {
         auto key = ripple::uint256::fromVoid(obj.mutable_key());
@@ -279,7 +280,7 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
 
         if (obj.mod_type() != org::xrpl::rpc::v1::RawLedgerObject::MODIFIED)
         {
-            if (rawData.object_neighbors_included())
+            if (rawData.object_neighbors_included() && !cacheFull_)
             {
                 std::string* predPtr = obj.mutable_predecessor();
                 if (!predPtr->size())
@@ -314,6 +315,10 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
                 }
             }
         }
+        else
+        {
+            modified.insert(key);
+        }
 
         backend_->writeLedgerObject(
             std::move(*obj.mutable_key()),
@@ -321,7 +326,7 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
             std::move(*obj.mutable_data()));
     }
     backend_->updateCache(cacheUpdates, lgrInfo.seq);
-    if (!rawData.object_neighbors_included())
+    if (cacheFull_)
     {
         std::sort(
             cacheUpdates.begin(),
@@ -333,6 +338,8 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
         ripple::uint256 ub;
         for (auto const& obj : cacheUpdates)
         {
+            if (modified.contains(obj.key))
+                continue;
             if (lb < obj.key && obj.key < ub)
                 continue;
             if (obj.key != ub)
@@ -340,17 +347,16 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
                 auto fetched =
                     backend_->cache().getPredecessor(obj.key, lgrInfo.seq);
                 if (fetched)
-                    lb = fetched->first;
+                    lb = fetched->key;
                 else
-                    lb = {};
+                    lb = Backend::firstKey;
             }
             auto fetched = backend_->fetchSuccessor(obj.key, lgrInfo.seq);
             if (fetched)
                 ub = fetched->key;
             else
             {
-                ub = {};
-                ub = ~ub;
+                ub = Backend::lastKey;
             }
             if (obj.blob.size() == 0)
             {
@@ -678,11 +684,15 @@ ReportingETL::monitor()
         BOOST_LOG_TRIVIAL(info)
             << __func__ << " : "
             << "Database already populated. Picking up from the tip of history";
-        std::thread t{[this, latestSequence]() {
-            BOOST_LOG_TRIVIAL(info) << "Loading cache";
-            loadBalancer_->loadInitialLedger(*latestSequence, true);
-            cacheFull_ = true;
-        }};
+        if (useCache_)
+        {
+            std::thread t{[this, latestSequence]() {
+                BOOST_LOG_TRIVIAL(info) << "Loading cache";
+                loadBalancer_->loadInitialLedger(*latestSequence, true);
+                cacheFull_ = true;
+            }};
+            t.detach();
+        }
     }
     if (!latestSequence)
     {
@@ -758,11 +768,15 @@ ReportingETL::monitorReadOnly()
     if (!mostRecent)
         return;
     uint32_t sequence = *mostRecent;
-    std::thread t{[this, sequence]() {
-        BOOST_LOG_TRIVIAL(info) << "Loading cache";
-        loadBalancer_->loadInitialLedger(sequence, true);
-        cacheFull_ = true;
-    }};
+    if (useCache_)
+    {
+        std::thread t{[this, sequence]() {
+            BOOST_LOG_TRIVIAL(info) << "Loading cache";
+            loadBalancer_->loadInitialLedger(sequence, true);
+            cacheFull_ = true;
+        }};
+        t.detach();
+    }
     while (!stopping_ &&
            networkValidatedLedgers_->waitUntilValidatedByNetwork(sequence))
     {
@@ -826,5 +840,7 @@ ReportingETL::ReportingETL(
         extractorThreads_ = config.at("extractor_threads").as_int64();
     if (config.contains("txn_threshold"))
         txnThreshold_ = config.at("txn_threshold").as_int64();
+    if (config.contains("cache"))
+        useCache_ = config.at("cache").as_bool();
 }
 

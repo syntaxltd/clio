@@ -711,7 +711,7 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
             }
         }
     }
-    if (!abort)
+    if (!abort && !cacheOnly)
     {
         std::sort(edgeKeys.begin(), edgeKeys.end());
         for (size_t i = 1; i < edgeKeys.size() - 1; i = i + 2)
@@ -727,9 +727,8 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
             std::move(edgeKeys[edgeKeys.size() - 1]),
             sequence,
             uint256ToString(zero));
-        return true;
     }
-    return false;
+    return !abort;
 }
 
 template <class Derived>

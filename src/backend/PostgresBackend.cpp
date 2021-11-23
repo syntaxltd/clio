@@ -268,7 +268,7 @@ PostgresBackend::hardFetchLedgerRange() const
 }
 
 std::optional<Blob>
-PostgresBackend::fetchLedgerObject(
+PostgresBackend::doFetchLedgerObject(
     ripple::uint256 const& key,
     uint32_t sequence) const
 {
@@ -359,7 +359,7 @@ PostgresBackend::fetchAllTransactionHashesInLedger(
     return {};
 }
 std::optional<LedgerObject>
-PostgresBackend::fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
+PostgresBackend::doFetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
     const
 {
     PgQuery pgQuery(pgPool_);
@@ -373,65 +373,13 @@ PostgresBackend::fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
     if (checkResult(res, 1))
     {
         auto next = res.asUInt256(0, 0);
+        if (next == lastKey)
+            return {};
         auto obj = fetchLedgerObject(next, ledgerSequence);
         assert(obj);
         return {{next, *obj}};
     }
 
-    return {};
-}
-
-LedgerPage
-PostgresBackend::doFetchLedgerPage(
-    std::optional<ripple::uint256> const& cursor,
-    std::uint32_t ledgerSequence,
-    std::uint32_t limit) const
-{
-    /*
-    auto index = getKeyIndexOfSeq(ledgerSequence);
-    if (!index)
-        return {};
-    PgQuery pgQuery(pgPool_);
-    pgQuery("SET statement_timeout TO 10000");
-    std::stringstream sql;
-    sql << "SELECT key FROM keys WHERE ledger_seq = "
-        << std::to_string(index->keyIndex);
-    if (cursor)
-        sql << " AND key >= \'\\x" << ripple::strHex(*cursor) << "\'";
-    sql << " ORDER BY key ASC LIMIT " << std::to_string(limit);
-    BOOST_LOG_TRIVIAL(debug) << __func__ << sql.str();
-    auto res = pgQuery(sql.str().data());
-    BOOST_LOG_TRIVIAL(debug) << __func__ << " fetched keys";
-    std::optional<ripple::uint256> returnCursor;
-    if (size_t numRows = checkResult(res, 1))
-    {
-        std::vector<ripple::uint256> keys;
-        for (size_t i = 0; i < numRows; ++i)
-        {
-            keys.push_back({res.asUInt256(i, 0)});
-        }
-        if (numRows >= limit)
-        {
-            returnCursor = keys.back();
-            ++(*returnCursor);
-        }
-
-        auto objs = fetchLedgerObjects(keys, ledgerSequence);
-        std::vector<LedgerObject> results;
-        for (size_t i = 0; i < objs.size(); ++i)
-        {
-            if (objs[i].size())
-            {
-                results.push_back({keys[i], objs[i]});
-            }
-        }
-        if (!cursor && !keys[0].isZero())
-            return {results, returnCursor, "Data may be incomplete"};
-        return {results, returnCursor};
-    }
-    if (!cursor)
-        return {{}, {}, "Data may be incomplete"};
-        */
     return {};
 }
 
@@ -526,7 +474,7 @@ PostgresBackend::fetchTransactions(
 }
 
 std::vector<Blob>
-PostgresBackend::fetchLedgerObjects(
+PostgresBackend::doFetchLedgerObjects(
     std::vector<ripple::uint256> const& keys,
     uint32_t sequence) const
 {

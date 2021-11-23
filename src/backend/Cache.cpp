@@ -31,6 +31,8 @@ void
 Cache::update(std::vector<LedgerObject> const& blobs, uint32_t seq)
 {
     std::unique_lock lck{mtx_};
+    if (seq > mostRecentSequence_)
+        mostRecentSequence_ = seq;
     for (auto const& k : pendingSweeps_)
     {
         auto e = map_[k];
@@ -45,13 +47,15 @@ Cache::update(std::vector<LedgerObject> const& blobs, uint32_t seq)
         insert(b.key, b.blob, seq);
     }
 }
-std::optional<std::pair<ripple::uint256, Blob>>
+std::optional<LedgerObject>
 Cache::getSuccessor(ripple::uint256 const& key, uint32_t seq) const
 {
     ripple::uint256 curKey = key;
-    std::shared_lock lck{mtx_};
     while (true)
     {
+        std::shared_lock lck{mtx_};
+        if (seq < mostRecentSequence_ - 1)
+            return {};
         auto e = map_.upper_bound(curKey);
         if (e == map_.end())
             return {};
@@ -66,13 +70,15 @@ Cache::getSuccessor(ripple::uint256 const& key, uint32_t seq) const
             return {{e->first, *blob}};
     }
 }
-std::optional<std::pair<ripple::uint256, Blob>>
+std::optional<LedgerObject>
 Cache::getPredecessor(ripple::uint256 const& key, uint32_t seq) const
 {
     ripple::uint256 curKey = key;
     std::shared_lock lck{mtx_};
     while (true)
     {
+        if (seq < mostRecentSequence_ - 1)
+            return {};
         auto e = map_.lower_bound(curKey);
         --e;
         if (e == map_.begin())

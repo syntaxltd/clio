@@ -100,12 +100,19 @@ public:
     fetchAllTransactionHashesInLedger(uint32_t ledgerSequence) const = 0;
 
     // *** state data methods
+    std::optional<Blob>
+    fetchLedgerObject(ripple::uint256 const& key, uint32_t sequence) const;
 
+    std::vector<Blob>
+    fetchLedgerObjects(
+        std::vector<ripple::uint256> const& keys,
+        uint32_t sequence) const;
     virtual std::optional<Blob>
-    fetchLedgerObject(ripple::uint256 const& key, uint32_t sequence) const = 0;
+    doFetchLedgerObject(ripple::uint256 const& key, uint32_t sequence)
+        const = 0;
 
     virtual std::vector<Blob>
-    fetchLedgerObjects(
+    doFetchLedgerObjects(
         std::vector<ripple::uint256> const& keys,
         uint32_t sequence) const = 0;
 
@@ -122,8 +129,11 @@ public:
         std::uint32_t limitHint = 0) const;
 
     // Fetches the successor to key/index
+    std::optional<LedgerObject>
+    fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence) const;
+    // Fetches the successor to key/index
     virtual std::optional<LedgerObject>
-    fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence) const = 0;
+    doFetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence) const = 0;
 
     BookOffersPage
     fetchBookOffers(
@@ -210,12 +220,6 @@ protected:
 
     // *** private helper methods
 private:
-    virtual LedgerPage
-    doFetchLedgerPage(
-        std::optional<ripple::uint256> const& cursor,
-        std::uint32_t ledgerSequence,
-        std::uint32_t limit) const = 0;
-
     virtual void
     doWriteLedgerObject(std::string&& key, uint32_t seq, std::string&& blob)
         const = 0;

@@ -80,6 +80,8 @@ private:
 
     std::atomic_bool cacheFull_ = false;
 
+    bool useCache_ = true;
+
     /// Used to determine when to write to the database during the initial
     /// ledger download. By default, the software downloads an entire ledger and
     /// then writes to the database. If flushInterval_ is non-zero, the software
