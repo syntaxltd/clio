@@ -1,4 +1,5 @@
 #include <backend/Cache.h>
+namespace Backend {
 
 void
 Cache::insert(ripple::uint256 const& key, Blob const& value, uint32_t seq)
@@ -27,9 +28,7 @@ Cache::select(CacheEntry const& entry, uint32_t seq) const
     return {};
 }
 void
-Cache::update(
-    std::vector<std::pair<ripple::uint256, Blob>> const& blobs,
-    uint32_t seq)
+Cache::update(std::vector<LedgerObject> const& blobs, uint32_t seq)
 {
     std::unique_lock lck{mtx_};
     for (auto const& k : pendingSweeps_)
@@ -43,7 +42,7 @@ Cache::update(
     }
     for (auto const& b : blobs)
     {
-        insert(b.first, b.second, seq);
+        insert(b.key, b.blob, seq);
     }
 }
 std::optional<std::pair<ripple::uint256, Blob>>
@@ -99,4 +98,4 @@ Cache::get(ripple::uint256 const& key, uint32_t seq) const
     auto const& entry = e->second;
     return select(entry, seq);
 }
-
+}  // namespace Backend

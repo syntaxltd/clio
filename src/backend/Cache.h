@@ -2,12 +2,13 @@
 #define CLIO_CACHE_H_INCLUDED
 
 #include <ripple/basics/base_uint.h>
+#include <backend/Types.h>
 #include <map>
 #include <mutex>
 #include <shared_mutex>
 #include <utility>
 #include <vector>
-using Blob = std::vector<unsigned char>;
+namespace Backend {
 class Cache
 {
     struct SeqBlobPair
@@ -55,9 +56,7 @@ class Cache
 
 public:
     void
-    update(
-        std::vector<std::pair<ripple::uint256, Blob>> const& blobs,
-        uint32_t seq);
+    update(std::vector<LedgerObject> const& blobs, uint32_t seq);
 
     std::optional<Blob>
     get(ripple::uint256 const& key, uint32_t seq) const;
@@ -69,4 +68,5 @@ public:
     getPredecessor(ripple::uint256 const& key, uint32_t seq) const;
 };
 
+}  // namespace Backend
 #endif

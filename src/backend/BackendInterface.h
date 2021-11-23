@@ -5,6 +5,7 @@
 #include <backend/BackendIndexer.h>
 #include <backend/Cache.h>
 #include <backend/DBHelpers.h>
+#include <backend/Types.h>
 class ReportingETL;
 class AsyncCallData;
 /*
@@ -22,60 +23,6 @@ class ETLSourceImpl<SslETLSource>;
 */
 class BackendTest_Basic_Test;
 namespace Backend {
-
-// *** return types
-
-using Blob = std::vector<unsigned char>;
-
-struct LedgerObject
-{
-    ripple::uint256 key;
-    Blob blob;
-};
-
-struct LedgerPage
-{
-    std::vector<LedgerObject> objects;
-    std::optional<ripple::uint256> cursor;
-    std::optional<std::string> warning;
-};
-struct BookOffersPage
-{
-    std::vector<LedgerObject> offers;
-    std::optional<ripple::uint256> cursor;
-    std::optional<std::string> warning;
-};
-struct TransactionAndMetadata
-{
-    Blob transaction;
-    Blob metadata;
-    uint32_t ledgerSequence;
-    uint32_t date;
-    bool
-    operator==(const TransactionAndMetadata& other) const
-    {
-        return transaction == other.transaction && metadata == other.metadata &&
-            ledgerSequence == other.ledgerSequence && date == other.date;
-    }
-};
-
-struct AccountTransactionsCursor
-{
-    uint32_t ledgerSequence;
-    uint32_t transactionIndex;
-};
-
-struct AccountTransactions
-{
-    std::vector<TransactionAndMetadata> txns;
-    std::optional<AccountTransactionsCursor> cursor;
-};
-
-struct LedgerRange
-{
-    uint32_t minSequence;
-    uint32_t maxSequence;
-};
 
 class DatabaseTimeout : public std::exception
 {
@@ -229,9 +176,7 @@ protected:
     }
 
     void
-    updateCache(
-        std::vector<std::pair<ripple::uint256, Blob>> const& updates,
-        uint32_t seq) const;
+    updateCache(std::vector<LedgerObject> const& updates, uint32_t seq) const;
 
     virtual void
     writeLedger(

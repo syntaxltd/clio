@@ -49,7 +49,7 @@ BackendInterface::writeLedgerObject(
 }
 void
 BackendInterface::updateCache(
-    std::vector<std::pair<ripple::uint256, Blob>> const& updates,
+    std::vector<LedgerObject> const& updates,
     uint32_t seq) const
 {
     cache_.update(updates, seq);

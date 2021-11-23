@@ -576,7 +576,7 @@ public:
         }
 
         BOOST_LOG_TRIVIAL(trace) << "Writing objects";
-        std::vector<std::pair<ripple::uint256, Blob>> cacheUpdates;
+        std::vector<Backend::LedgerObject> cacheUpdates;
         cacheUpdates.reserve(cur_->ledger_objects().objects_size());
         for (int i = 0; i < cur_->ledger_objects().objects_size(); ++i)
         {

@@ -269,7 +269,7 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
     BOOST_LOG_TRIVIAL(debug) << __func__ << " : "
                              << "wrote ledger header";
 
-    std::vector<std::pair<ripple::uint256, Blob>> cacheUpdates;
+    std::vector<Backend::LedgerObject> cacheUpdates;
     cacheUpdates.reserve(rawData.ledger_objects().objects_size());
     for (auto& obj : *(rawData.mutable_ledger_objects()->mutable_objects()))
     {
@@ -326,25 +326,25 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
         std::sort(
             cacheUpdates.begin(),
             cacheUpdates.end(),
-            [](auto const& a, auto const& b) { return a.first < b.first; });
+            [](auto const& a, auto const& b) { return a.key < b.key; });
 
         ripple::uint256 lb;
         lb--;
         ripple::uint256 ub;
         for (auto const& obj : cacheUpdates)
         {
-            if (lb < obj.first && obj.first < ub)
+            if (lb < obj.key && obj.key < ub)
                 continue;
-            if (obj.first != ub)
+            if (obj.key != ub)
             {
                 auto fetched =
-                    backend_->cache().getPredecessor(obj.first, lgrInfo.seq);
+                    backend_->cache().getPredecessor(obj.key, lgrInfo.seq);
                 if (fetched)
                     lb = fetched->first;
                 else
                     lb = {};
             }
-            auto fetched = backend_->fetchSuccessor(obj.first, lgrInfo.seq);
+            auto fetched = backend_->fetchSuccessor(obj.key, lgrInfo.seq);
             if (fetched)
                 ub = fetched->key;
             else
@@ -352,7 +352,7 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
                 ub = {};
                 ub = ~ub;
             }
-            if (obj.second.size() == 0)
+            if (obj.blob.size() == 0)
             {
                 backend_->writeSuccessor(
                     uint256ToString(lb), lgrInfo.seq, uint256ToString(ub));
@@ -360,13 +360,9 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
             else
             {
                 backend_->writeSuccessor(
-                    uint256ToString(lb),
-                    lgrInfo.seq,
-                    uint256ToString(obj.first));
+                    uint256ToString(lb), lgrInfo.seq, uint256ToString(obj.key));
                 backend_->writeSuccessor(
-                    uint256ToString(obj.first),
-                    lgrInfo.seq,
-                    uint256ToString(ub));
+                    uint256ToString(obj.key), lgrInfo.seq, uint256ToString(ub));
             }
         }
     }
@@ -770,7 +766,12 @@ ReportingETL::monitorReadOnly()
     while (!stopping_ &&
            networkValidatedLedgers_->waitUntilValidatedByNetwork(sequence))
     {
-        publishLedger(sequence, {});
+        if (publishLedger(sequence, {}))
+        {
+            auto diff = backend_->fetchLedgerDiff(sequence);
+
+            backend_->updateCache(diff, sequence);
+        }
         ++sequence;
     }
 }
