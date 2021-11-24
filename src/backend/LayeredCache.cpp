@@ -1,8 +1,11 @@
-#include <backend/Cache.h>
+#include <backend/LayeredCache.h>
 namespace Backend {
 
 void
-Cache::insert(ripple::uint256 const& key, Blob const& value, uint32_t seq)
+LayeredCache::insert(
+    ripple::uint256 const& key,
+    Blob const& value,
+    uint32_t seq)
 {
     auto entry = map_[key];
     // stale insert, do nothing
@@ -17,7 +20,7 @@ Cache::insert(ripple::uint256 const& key, Blob const& value, uint32_t seq)
 }
 
 std::optional<Blob>
-Cache::select(CacheEntry const& entry, uint32_t seq) const
+LayeredCache::select(CacheEntry const& entry, uint32_t seq) const
 {
     if (seq < entry.old.seq)
         return {};
@@ -28,7 +31,7 @@ Cache::select(CacheEntry const& entry, uint32_t seq) const
     return {};
 }
 void
-Cache::update(std::vector<LedgerObject> const& blobs, uint32_t seq)
+LayeredCache::update(std::vector<LedgerObject> const& blobs, uint32_t seq)
 {
     std::unique_lock lck{mtx_};
     if (seq > mostRecentSequence_)
@@ -48,7 +51,7 @@ Cache::update(std::vector<LedgerObject> const& blobs, uint32_t seq)
     }
 }
 std::optional<LedgerObject>
-Cache::getSuccessor(ripple::uint256 const& key, uint32_t seq) const
+LayeredCache::getSuccessor(ripple::uint256 const& key, uint32_t seq) const
 {
     ripple::uint256 curKey = key;
     while (true)
@@ -71,7 +74,7 @@ Cache::getSuccessor(ripple::uint256 const& key, uint32_t seq) const
     }
 }
 std::optional<LedgerObject>
-Cache::getPredecessor(ripple::uint256 const& key, uint32_t seq) const
+LayeredCache::getPredecessor(ripple::uint256 const& key, uint32_t seq) const
 {
     ripple::uint256 curKey = key;
     std::shared_lock lck{mtx_};
@@ -95,7 +98,7 @@ Cache::getPredecessor(ripple::uint256 const& key, uint32_t seq) const
     }
 }
 std::optional<Blob>
-Cache::get(ripple::uint256 const& key, uint32_t seq) const
+LayeredCache::get(ripple::uint256 const& key, uint32_t seq) const
 {
     std::shared_lock lck{mtx_};
     auto e = map_.find(key);

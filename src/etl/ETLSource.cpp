@@ -490,8 +490,6 @@ class AsyncCallData
     unsigned char nextPrefix_;
 
 public:
-    std::string lastKey_;
-    std::string firstKey_;
     AsyncCallData(
         uint32_t seq,
         ripple::uint256 const& marker,
@@ -586,28 +584,6 @@ public:
                  {obj.mutable_data()->begin(), obj.mutable_data()->end()}});
             if (!cacheOnly)
             {
-                if (lastKey_.size())
-                {
-                    backend.writeSuccessor(
-                        std::move(lastKey_),
-                        request_.ledger().sequence(),
-                        std::move(std::string{obj.key()}));
-                    lastKey_ = {};
-                }
-                if (i + 1 < cur_->ledger_objects().objects_size())
-                {
-                    backend.writeSuccessor(
-                        std::move(std::string{obj.key()}),
-                        request_.ledger().sequence(),
-                        std::move(std::string{
-                            cur_->ledger_objects().objects(i + 1).key()}));
-                }
-                else
-                {
-                    lastKey_ = obj.key();
-                }
-                if (!firstKey_.size())
-                    firstKey_ = obj.key();
                 backend.writeLedgerObject(
                     std::move(*obj.mutable_key()),
                     request_.ledger().sequence(),
@@ -678,7 +654,6 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
 
     size_t numFinished = 0;
     bool abort = false;
-    std::vector<std::string> edgeKeys;
     while (numFinished < calls.size() && cq.Next(&tag, &ok))
     {
         assert(tag);
@@ -698,8 +673,6 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
             auto result = ptr->process(stub_, cq, *backend_, abort, cacheOnly);
             if (result != AsyncCallData::CallStatus::MORE)
             {
-                edgeKeys.push_back(ptr->firstKey_);
-                edgeKeys.push_back(ptr->lastKey_);
                 numFinished++;
                 BOOST_LOG_TRIVIAL(info)
                     << "Finished a marker. "
@@ -713,20 +686,25 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
     }
     if (!abort && !cacheOnly)
     {
-        std::sort(edgeKeys.begin(), edgeKeys.end());
-        for (size_t i = 1; i < edgeKeys.size() - 1; i = i + 2)
+        auto start = std::chrono::system_clock::now();
+        ripple::uint256 prev = Backend::firstKey;
+        while (auto cur = backend_->cache().getSuccessor(prev, sequence))
         {
+            assert(cur);
             backend_->writeSuccessor(
-                std::move(edgeKeys[i]), sequence, std::move(edgeKeys[i + 1]));
+                uint256ToString(prev), sequence, uint256ToString(cur->key));
+            prev = std::move(cur->key);
         }
-        ripple::uint256 zero;
         backend_->writeSuccessor(
-            uint256ToString(zero), sequence, std::move(edgeKeys[0]));
-        zero--;
-        backend_->writeSuccessor(
-            std::move(edgeKeys[edgeKeys.size() - 1]),
-            sequence,
-            uint256ToString(zero));
+            uint256ToString(prev), sequence, uint256ToString(Backend::lastKey));
+        auto end = std::chrono::system_clock::now();
+        auto seconds =
+            std::chrono::duration_cast<std::chrono::seconds>(end - start)
+                .count();
+        BOOST_LOG_TRIVIAL(info)
+            << __func__
+            << " - Looping through cache and submitting all writes took "
+            << seconds << " seconds";
     }
     return !abort;
 }

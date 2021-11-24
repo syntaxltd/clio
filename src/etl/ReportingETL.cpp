@@ -130,6 +130,12 @@ ReportingETL::publishLedger(ripple::LedgerInfo const& lgrInfo)
 {
     BOOST_LOG_TRIVIAL(debug)
         << __func__ << " - Publishing ledger " << std::to_string(lgrInfo.seq);
+    if (!writing_)
+    {
+        BOOST_LOG_TRIVIAL(debug) << __func__ << " - Updating cache";
+        auto diff = backend_->fetchLedgerDiff(lgrInfo.seq);
+        backend_->updateCache(diff, lgrInfo.seq);
+    }
     backend_->updateRange(lgrInfo.seq);
     auto ledgerRange = backend_->fetchLedgerRange();
 
@@ -270,8 +276,9 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
                              << "wrote ledger header";
 
     std::vector<Backend::LedgerObject> cacheUpdates;
-    cacheUpdates.reserve(rawData.ledger_objects().objects_size());
     std::set<ripple::uint256> modified;
+    cacheUpdates.reserve(rawData.ledger_objects().objects_size());
+    std::vector<std::pair<std::string, std::string>> successors;
     for (auto& obj : *(rawData.mutable_ledger_objects()->mutable_objects()))
     {
         auto key = ripple::uint256::fromVoid(obj.mutable_key());
@@ -280,45 +287,28 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
 
         if (obj.mod_type() != org::xrpl::rpc::v1::RawLedgerObject::MODIFIED)
         {
-            if (rawData.object_neighbors_included() && !cacheFull_)
+            if (rawData.object_neighbors_included())
             {
                 std::string* predPtr = obj.mutable_predecessor();
                 if (!predPtr->size())
-                {
-                    ripple::uint256 zero;
-                    *predPtr = uint256ToString(zero);
-                }
+                    *predPtr = uint256ToString(Backend::firstKey);
                 std::string* succPtr = obj.mutable_successor();
                 if (!succPtr->size())
-                {
-                    ripple::uint256 ff;
-                    ff--;
-                    *succPtr = uint256ToString(ff);
-                }
+                    *succPtr = uint256ToString(Backend::lastKey);
 
                 if (obj.mod_type() ==
                     org::xrpl::rpc::v1::RawLedgerObject::DELETED)
-                {
-                    backend_->writeSuccessor(
-                        std::move(*predPtr), lgrInfo.seq, std::move(*succPtr));
-                }
+                    successors.emplace_back(
+                        std::move(*predPtr), std::move(*succPtr));
                 else
                 {
-                    backend_->writeSuccessor(
-                        std::move(*predPtr),
-                        lgrInfo.seq,
-                        std::move(std::string{obj.key()}));
-                    backend_->writeSuccessor(
-                        std::move(std::string{obj.key()}),
-                        lgrInfo.seq,
-                        std::move(*succPtr));
+                    successors.emplace_back(std::move(*predPtr), obj.key());
+                    successors.emplace_back(obj.key(), std::move(*succPtr));
                 }
             }
         }
         else
-        {
             modified.insert(key);
-        }
 
         backend_->writeLedgerObject(
             std::move(*obj.mutable_key()),
@@ -326,49 +316,41 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
             std::move(*obj.mutable_data()));
     }
     backend_->updateCache(cacheUpdates, lgrInfo.seq);
-    if (cacheFull_)
+    if (!cacheFull_)
     {
-        std::sort(
-            cacheUpdates.begin(),
-            cacheUpdates.end(),
-            [](auto const& a, auto const& b) { return a.key < b.key; });
-
-        ripple::uint256 lb;
-        lb--;
-        ripple::uint256 ub;
+        assert(successors.size());
+        for (auto&& succ : successors)
+        {
+            backend_->writeSuccessor(
+                std::move(succ.first), lgrInfo.seq, std::move(succ.second));
+        }
+    }
+    else
+    {
         for (auto const& obj : cacheUpdates)
         {
             if (modified.contains(obj.key))
                 continue;
-            if (lb < obj.key && obj.key < ub)
-                continue;
-            if (obj.key != ub)
-            {
-                auto fetched =
-                    backend_->cache().getPredecessor(obj.key, lgrInfo.seq);
-                if (fetched)
-                    lb = fetched->key;
-                else
-                    lb = Backend::firstKey;
-            }
-            auto fetched = backend_->fetchSuccessor(obj.key, lgrInfo.seq);
-            if (fetched)
-                ub = fetched->key;
-            else
-            {
-                ub = Backend::lastKey;
-            }
+            auto lb = backend_->cache().getPredecessor(obj.key, lgrInfo.seq);
+            if (!lb)
+                lb = {Backend::firstKey, {}};
+            auto ub = backend_->cache().getSuccessor(obj.key, lgrInfo.seq);
+            ub = {Backend::lastKey, {}};
             if (obj.blob.size() == 0)
-            {
                 backend_->writeSuccessor(
-                    uint256ToString(lb), lgrInfo.seq, uint256ToString(ub));
-            }
+                    uint256ToString(lb->key),
+                    lgrInfo.seq,
+                    uint256ToString(ub->key));
             else
             {
                 backend_->writeSuccessor(
-                    uint256ToString(lb), lgrInfo.seq, uint256ToString(obj.key));
+                    uint256ToString(lb->key),
+                    lgrInfo.seq,
+                    uint256ToString(obj.key));
                 backend_->writeSuccessor(
-                    uint256ToString(obj.key), lgrInfo.seq, uint256ToString(ub));
+                    uint256ToString(obj.key),
+                    lgrInfo.seq,
+                    uint256ToString(ub->key));
             }
         }
     }
@@ -580,6 +562,7 @@ ReportingETL::runETLPipeline(uint32_t startSequence, int numExtractors)
                 lastPublishedSequence = lgrInfo.seq;
             }
             writeConflict = !success;
+            // TODO move online delete logic to an admin RPC call
             if (onlineDeleteInterval_ && !deleting_ &&
                 lgrInfo.seq - minSequence > *onlineDeleteInterval_)
             {
@@ -684,15 +667,12 @@ ReportingETL::monitor()
         BOOST_LOG_TRIVIAL(info)
             << __func__ << " : "
             << "Database already populated. Picking up from the tip of history";
-        if (useCache_)
-        {
-            std::thread t{[this, latestSequence]() {
-                BOOST_LOG_TRIVIAL(info) << "Loading cache";
-                loadBalancer_->loadInitialLedger(*latestSequence, true);
-                cacheFull_ = true;
-            }};
-            t.detach();
-        }
+        std::thread t{[this, latestSequence]() {
+            BOOST_LOG_TRIVIAL(info) << "Loading cache";
+            loadBalancer_->loadInitialLedger(*latestSequence, true);
+            cacheFull_ = true;
+        }};
+        t.detach();
     }
     if (!latestSequence)
     {
@@ -753,9 +733,7 @@ ReportingETL::monitor()
                 nextSequence = *lastPublished + 1;
         }
         else
-        {
             ++nextSequence;
-        }
     }
 }
 
@@ -768,24 +746,15 @@ ReportingETL::monitorReadOnly()
     if (!mostRecent)
         return;
     uint32_t sequence = *mostRecent;
-    if (useCache_)
-    {
-        std::thread t{[this, sequence]() {
-            BOOST_LOG_TRIVIAL(info) << "Loading cache";
-            loadBalancer_->loadInitialLedger(sequence, true);
-            cacheFull_ = true;
-        }};
-        t.detach();
-    }
+    std::thread t{[this, sequence]() {
+        BOOST_LOG_TRIVIAL(info) << "Loading cache";
+        loadBalancer_->loadInitialLedger(sequence, true);
+        cacheFull_ = true;
+    }};
     while (!stopping_ &&
            networkValidatedLedgers_->waitUntilValidatedByNetwork(sequence))
     {
-        if (publishLedger(sequence, {}))
-        {
-            auto diff = backend_->fetchLedgerDiff(sequence);
-
-            backend_->updateCache(diff, sequence);
-        }
+        publishLedger(sequence, {});
         ++sequence;
     }
 }
@@ -840,7 +809,5 @@ ReportingETL::ReportingETL(
         extractorThreads_ = config.at("extractor_threads").as_int64();
     if (config.contains("txn_threshold"))
         txnThreshold_ = config.at("txn_threshold").as_int64();
-    if (config.contains("cache"))
-        useCache_ = config.at("cache").as_bool();
 }
 

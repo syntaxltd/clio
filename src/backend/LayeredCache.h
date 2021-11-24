@@ -1,5 +1,5 @@
-#ifndef CLIO_CACHE_H_INCLUDED
-#define CLIO_CACHE_H_INCLUDED
+#ifndef CLIO_LAYEREDCACHE_H_INCLUDED
+#define CLIO_LAYEREDCACHE_H_INCLUDED
 
 #include <ripple/basics/base_uint.h>
 #include <backend/Types.h>
@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 namespace Backend {
-class Cache
+class LayeredCache
 {
     struct SeqBlobPair
     {

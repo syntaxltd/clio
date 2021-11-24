@@ -2,8 +2,8 @@
 #define RIPPLE_APP_REPORTING_BACKENDINTERFACE_H_INCLUDED
 #include <ripple/ledger/ReadView.h>
 #include <boost/asio.hpp>
-#include <backend/Cache.h>
 #include <backend/DBHelpers.h>
+#include <backend/SimpleCache.h>
 #include <backend/Types.h>
 class ReportingETL;
 class AsyncCallData;
@@ -37,7 +37,7 @@ class BackendInterface
 protected:
     mutable bool isFirst_ = true;
     mutable std::optional<LedgerRange> range;
-    mutable Cache cache_;
+    mutable SimpleCache cache_;
 
 public:
     BackendInterface(boost::json::object const& config)
@@ -55,7 +55,7 @@ public:
     // *** ledger methods
     //
 
-    Cache const&
+    SimpleCache const&
     cache()
     {
         return cache_;

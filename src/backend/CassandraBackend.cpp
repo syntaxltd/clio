@@ -180,8 +180,7 @@ CassandraBackend::writeSuccessor(
     uint32_t seq,
     std::string&& successor) const
 {
-    BOOST_LOG_TRIVIAL(trace) << "Writing successor to cassandra";
-    BOOST_LOG_TRIVIAL(debug)
+    BOOST_LOG_TRIVIAL(trace)
         << "Writing successor. key = " << key
         << " seq = " << std::to_string(seq) << " successor = " << successor;
     assert(key.size());

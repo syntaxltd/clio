@@ -72,7 +72,8 @@ target_sources(clio PRIVATE
   src/backend/BackendInterface.cpp
   src/backend/Pg.cpp
   src/backend/DBHelpers.cpp
-  src/backend/Cache.cpp
+  src/backend/SimpleCache.cpp
+  src/backend/LayeredCache.cpp
   ## ETL
   src/etl/ETLSource.cpp
   src/etl/ReportingETL.cpp
