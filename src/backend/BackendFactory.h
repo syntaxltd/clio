@@ -46,6 +46,8 @@ make_Backend(boost::json::object const& config)
         backend->updateRange(rng->minSequence);
         backend->updateRange(rng->maxSequence);
     }
+    if (dbConfig.contains("cache") && !dbConfig.at("cache").as_bool())
+        backend->cache().disable();
 
     BOOST_LOG_TRIVIAL(info)
         << __func__ << ": Constructed BackendInterface Successfully";

@@ -13,12 +13,14 @@ class SimpleCache
 {
     struct CacheEntry
     {
-        uint32_t seq;
+        uint32_t seq = 0;
         Blob blob;
     };
     std::map<ripple::uint256, CacheEntry> map_;
     mutable std::shared_mutex mtx_;
-    uint32_t sequence_;
+    uint32_t latestSeq_ = 0;
+    std::atomic_bool enabled_ = true;
+    std::atomic_bool full_ = false;
 
 public:
     void
@@ -32,6 +34,24 @@ public:
 
     std::optional<LedgerObject>
     getPredecessor(ripple::uint256 const& key, uint32_t seq) const;
+
+    void
+    setFull();
+
+    void
+    disable();
+
+    void
+    enable();
+
+    bool
+    isEnabled();
+
+    bool
+    isFull();
+
+    size_t
+    size();
 };
 
 }  // namespace Backend

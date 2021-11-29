@@ -60,7 +60,23 @@ BackendInterface::fetchLedgerObject(
     uint32_t sequence) const
 {
     auto obj = cache_.get(key, sequence);
-    return obj ? *obj : doFetchLedgerObject(key, sequence);
+    if (obj)
+    {
+        BOOST_LOG_TRIVIAL(debug) << __func__ << " - cache hit";
+        return *obj;
+    }
+    else
+    {
+        BOOST_LOG_TRIVIAL(debug) << __func__ << " - cache miss";
+        auto dbObj = doFetchLedgerObject(key, sequence);
+        if (!dbObj)
+            BOOST_LOG_TRIVIAL(debug)
+                << __func__ << " - missed cache and missed in db";
+        else
+            BOOST_LOG_TRIVIAL(debug)
+                << __func__ << " - missed cache but found in db";
+        return dbObj;
+    }
 }
 
 std::vector<Blob>
@@ -79,6 +95,9 @@ BackendInterface::fetchLedgerObjects(
         else
             misses.push_back(keys[i]);
     }
+    BOOST_LOG_TRIVIAL(debug)
+        << __func__ << " - cache hit = " << keys.size() - misses.size()
+        << " - cache misses = " << misses.size();
 
     if (misses.size())
     {
@@ -100,6 +119,10 @@ BackendInterface::fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
     const
 {
     auto succ = cache_.getSuccessor(key, ledgerSequence);
+    if (succ)
+        BOOST_LOG_TRIVIAL(debug) << __func__ << " - cache hit";
+    else
+        BOOST_LOG_TRIVIAL(debug) << __func__ << " - cache miss";
     return succ ? *succ : doFetchSuccessor(key, ledgerSequence);
 }
 BookOffersPage
@@ -109,8 +132,8 @@ BackendInterface::fetchBookOffers(
     std::uint32_t limit,
     std::optional<ripple::uint256> const& cursor) const
 {
-    // TODO try to speed this up. This can take a few seconds. The goal is to
-    // get it down to a few hundred milliseconds.
+    // TODO try to speed this up. This can take a few seconds. The goal is
+    // to get it down to a few hundred milliseconds.
     BookOffersPage page;
     const ripple::uint256 bookEnd = ripple::getQualityNext(book);
     ripple::uint256 uTipIndex = book;

@@ -56,6 +56,12 @@ public:
     //
 
     SimpleCache const&
+    cache() const
+    {
+        return cache_;
+    }
+
+    SimpleCache&
     cache()
     {
         return cache_;

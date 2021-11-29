@@ -493,10 +493,12 @@ public:
     AsyncCallData(
         uint32_t seq,
         ripple::uint256 const& marker,
-        std::optional<ripple::uint256> const& nextMarker)
+        std::optional<ripple::uint256> const& nextMarker,
+        bool getNeighbors)
     {
         request_.mutable_ledger()->set_sequence(seq);
         request_.set_user("ETL");
+        request_.set_get_object_neighbors(getNeighbors);
 
         if (marker.isNonZero())
         {
@@ -531,8 +533,8 @@ public:
         bool abort,
         bool cacheOnly = false)
     {
-        BOOST_LOG_TRIVIAL(info) << "Processing response. "
-                                << "Marker prefix = " << getMarkerPrefix();
+        BOOST_LOG_TRIVIAL(debug) << "Processing response. "
+                                 << "Marker prefix = " << getMarkerPrefix();
         if (abort)
         {
             BOOST_LOG_TRIVIAL(error) << "AsyncCallData aborted";
@@ -580,10 +582,43 @@ public:
         {
             auto& obj = *(cur_->mutable_ledger_objects()->mutable_objects(i));
             cacheUpdates.push_back(
-                {ripple::uint256::fromVoid(obj.mutable_key()),
+                {*ripple::uint256::fromVoidChecked(obj.key()),
                  {obj.mutable_data()->begin(), obj.mutable_data()->end()}});
+            BOOST_LOG_TRIVIAL(debug)
+                << __func__
+                << " - id = " << *ripple::uint256::fromVoidChecked(obj.key());
             if (!cacheOnly)
             {
+                if (cur_->object_neighbors_included())
+                {
+                    std::string* predPtr = obj.mutable_predecessor();
+                    if (!predPtr->size())
+                        *predPtr = uint256ToString(Backend::firstKey);
+                    std::string* succPtr = obj.mutable_successor();
+                    if (!succPtr->size())
+                        *succPtr = uint256ToString(Backend::lastKey);
+
+                    if (obj.mod_type() ==
+                        org::xrpl::rpc::v1::RawLedgerObject::DELETED)
+                        backend.writeSuccessor(
+                            std::move(*predPtr),
+                            request_.ledger().sequence(),
+                            std::move(*succPtr));
+                    else
+                    {
+                        backend.writeSuccessor(
+                            std::move(*predPtr),
+                            request_.ledger().sequence(),
+                            std::move(std::string{obj.key()}));
+                        backend.writeSuccessor(
+                            std::move(std::string{obj.key()}),
+                            request_.ledger().sequence(),
+                            std::move(*succPtr));
+                    }
+                }
+                else
+                    assert(backend.cache().isEnabled());
+                // TODO allow rippled to send neighbor info
                 backend.writeLedgerObject(
                     std::move(*obj.mutable_key()),
                     request_.ledger().sequence(),
@@ -646,7 +681,8 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
         std::optional<ripple::uint256> nextMarker;
         if (i + 1 < markers.size())
             nextMarker = markers[i + 1];
-        calls.emplace_back(sequence, markers[i], nextMarker);
+        calls.emplace_back(
+            sequence, markers[i], nextMarker, !backend_->cache().isEnabled());
     }
 
     for (auto& c : calls)
@@ -684,7 +720,10 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
             }
         }
     }
-    if (!abort && !cacheOnly)
+    BOOST_LOG_TRIVIAL(info)
+        << __func__ << " - finished loadInitialLedger. cache size = "
+        << backend_->cache().size();
+    if (!abort && !cacheOnly && backend_->cache().isEnabled())
     {
         auto start = std::chrono::system_clock::now();
         ripple::uint256 prev = Backend::firstKey;

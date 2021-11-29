@@ -111,7 +111,7 @@ ReportingETL::loadInitialLedger(uint32_t startingSequence)
     // consumes from the queue and inserts the data into the Ledger object.
     // Once the below call returns, all data has been pushed into the queue
     loadBalancer_->loadInitialLedger(startingSequence);
-    cacheFull_ = true;
+    backend_->cache().setFull();
     BOOST_LOG_TRIVIAL(debug) << __func__ << " loaded initial ledger";
 
     if (!stopping_)
@@ -249,7 +249,7 @@ ReportingETL::fetchLedgerDataAndDiff(uint32_t idx)
         << "Attempting to fetch ledger with sequence = " << idx;
 
     std::optional<org::xrpl::rpc::v1::GetLedgerResponse> response =
-        loadBalancer_->fetchLedger(idx, true, !cacheFull_);
+        loadBalancer_->fetchLedger(idx, true, !backend_->cache().isFull());
     BOOST_LOG_TRIVIAL(trace) << __func__ << " : "
                              << "GetLedger reply = " << response->DebugString();
     return response;
@@ -281,9 +281,10 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
     std::vector<std::pair<std::string, std::string>> successors;
     for (auto& obj : *(rawData.mutable_ledger_objects()->mutable_objects()))
     {
-        auto key = ripple::uint256::fromVoid(obj.mutable_key());
+        auto key = ripple::uint256::fromVoidChecked(obj.key());
+        assert(key);
         cacheUpdates.push_back(
-            {key, {obj.mutable_data()->begin(), obj.mutable_data()->end()}});
+            {*key, {obj.mutable_data()->begin(), obj.mutable_data()->end()}});
 
         if (obj.mod_type() != org::xrpl::rpc::v1::RawLedgerObject::MODIFIED)
         {
@@ -308,7 +309,7 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
             }
         }
         else
-            modified.insert(key);
+            modified.insert(*key);
 
         backend_->writeLedgerObject(
             std::move(*obj.mutable_key()),
@@ -316,7 +317,7 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
             std::move(*obj.mutable_data()));
     }
     backend_->updateCache(cacheUpdates, lgrInfo.seq);
-    if (!cacheFull_)
+    if (!backend_->cache().isFull())
     {
         assert(successors.size());
         for (auto&& succ : successors)
@@ -422,11 +423,6 @@ ReportingETL::runETLPipeline(uint32_t startSequence, int numExtractors)
         throw std::runtime_error("runETLPipeline: parent ledger is null");
     }
     std::atomic<uint32_t> minSequence = rng->minSequence;
-    BOOST_LOG_TRIVIAL(info) << __func__ << " : "
-                            << "Populating caches";
-
-    BOOST_LOG_TRIVIAL(info) << __func__ << " : "
-                            << "Populated caches";
 
     std::atomic_bool writeConflict = false;
     std::optional<uint32_t> lastPublishedSequence;
@@ -667,12 +663,15 @@ ReportingETL::monitor()
         BOOST_LOG_TRIVIAL(info)
             << __func__ << " : "
             << "Database already populated. Picking up from the tip of history";
-        std::thread t{[this, latestSequence]() {
-            BOOST_LOG_TRIVIAL(info) << "Loading cache";
-            loadBalancer_->loadInitialLedger(*latestSequence, true);
-            cacheFull_ = true;
-        }};
-        t.detach();
+        if (backend_->cache().isEnabled())
+        {
+            std::thread t{[this, latestSequence]() {
+                BOOST_LOG_TRIVIAL(info) << "Loading cache";
+                loadBalancer_->loadInitialLedger(*latestSequence, true);
+                backend_->cache().setFull();
+            }};
+            t.detach();
+        }
     }
     if (!latestSequence)
     {
@@ -746,11 +745,15 @@ ReportingETL::monitorReadOnly()
     if (!mostRecent)
         return;
     uint32_t sequence = *mostRecent;
-    std::thread t{[this, sequence]() {
-        BOOST_LOG_TRIVIAL(info) << "Loading cache";
-        loadBalancer_->loadInitialLedger(sequence, true);
-        cacheFull_ = true;
-    }};
+    if (backend_->cache().isEnabled())
+    {
+        std::thread t{[this, sequence]() {
+            BOOST_LOG_TRIVIAL(info) << "Loading cache";
+            loadBalancer_->loadInitialLedger(sequence, true);
+            backend_->cache().setFull();
+        }};
+        t.detach();
+    }
     while (!stopping_ &&
            networkValidatedLedgers_->waitUntilValidatedByNetwork(sequence))
     {
