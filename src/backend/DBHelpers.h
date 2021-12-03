@@ -67,7 +67,7 @@ isBookDir(T const& key, R const& object)
 
     ripple::STLedgerEntry const sle{
         ripple::SerialIter{object.data(), object.size()}, key};
-    return sle[~ripple::sfOwner].has_value();
+    return !sle[~ripple::sfOwner].has_value();
 }
 template <class T>
 inline ripple::uint256

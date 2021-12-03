@@ -707,6 +707,8 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
 
     size_t numFinished = 0;
     bool abort = false;
+    size_t incr = 500000;
+    size_t progress = incr;
     while (numFinished < calls.size() && cq.Next(&tag, &ok))
     {
         assert(tag);
@@ -735,8 +737,13 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
             {
                 abort = true;
             }
-            BOOST_LOG_TRIVIAL(info) << "Downloaded " << backend_->cache().size()
-                                    << " records from rippled";
+            if (backend_->cache().size() > progress)
+            {
+                BOOST_LOG_TRIVIAL(info)
+                    << "Downloaded " << backend_->cache().size()
+                    << " records from rippled";
+                progress += incr;
+            }
         }
     }
     BOOST_LOG_TRIVIAL(info)
