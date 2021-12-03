@@ -614,7 +614,7 @@ async def book_offers(ip, port, ledger, pay_currency, pay_issuer, get_currency, 
                     req["cursor"] = cursor
                 await ws.send(json.dumps(req))
                 res = json.loads(await ws.recv())
-                print(json.dumps(res,indent=4,sort_keys=True))
+                #print(json.dumps(res,indent=4,sort_keys=True))
                 if "result" in res:
                     res = res["result"]
                 for x in res["offers"]:

@@ -45,7 +45,7 @@ message("Current binary dir: ${CMAKE_CURRENT_BINARY_DIR}")
 message("Module path: ${CMAKE_MODULE_PATH}")
 FetchContent_Declare(rippled
   GIT_REPOSITORY https://github.com/cjcobb23/rippled.git
-  GIT_TAG clio
+  GIT_TAG clio_caching
 )
 FetchContent_MakeAvailable(rippled)
 target_link_libraries(clio PUBLIC xrpl_core grpc_pbufs)

@@ -111,7 +111,6 @@ ReportingETL::loadInitialLedger(uint32_t startingSequence)
     // consumes from the queue and inserts the data into the Ledger object.
     // Once the below call returns, all data has been pushed into the queue
     loadBalancer_->loadInitialLedger(startingSequence);
-    backend_->cache().setFull();
     BOOST_LOG_TRIVIAL(debug) << __func__ << " loaded initial ledger";
 
     if (!stopping_)
@@ -249,7 +248,7 @@ ReportingETL::fetchLedgerDataAndDiff(uint32_t idx)
         << "Attempting to fetch ledger with sequence = " << idx;
 
     std::optional<org::xrpl::rpc::v1::GetLedgerResponse> response =
-        loadBalancer_->fetchLedger(idx, true, !backend_->cache().isFull());
+        loadBalancer_->fetchLedger(idx, true, true);
     BOOST_LOG_TRIVIAL(trace) << __func__ << " : "
                              << "GetLedger reply = " << response->DebugString();
     return response;
@@ -275,20 +274,22 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
     BOOST_LOG_TRIVIAL(debug) << __func__ << " : "
                              << "wrote ledger header";
 
-    std::vector<Backend::LedgerObject> cacheUpdates;
-    std::set<ripple::uint256> modified;
-    cacheUpdates.reserve(rawData.ledger_objects().objects_size());
-    std::vector<std::pair<std::string, std::string>> successors;
-    for (auto& obj : *(rawData.mutable_ledger_objects()->mutable_objects()))
+    // Write successor info, if included from rippled
+    if (rawData.object_neighbors_included())
     {
-        auto key = ripple::uint256::fromVoidChecked(obj.key());
-        assert(key);
-        cacheUpdates.push_back(
-            {*key, {obj.mutable_data()->begin(), obj.mutable_data()->end()}});
-
-        if (obj.mod_type() != org::xrpl::rpc::v1::RawLedgerObject::MODIFIED)
+        for (auto& obj : *(rawData.mutable_book_successors()))
         {
-            if (rawData.object_neighbors_included())
+            auto firstBook = std::move(*obj.mutable_first_book());
+            if (!firstBook.size())
+                firstBook = uint256ToString(Backend::lastKey);
+            backend_->writeSuccessor(
+                std::move(*obj.mutable_book_base()),
+                lgrInfo.seq,
+                std::move(firstBook));
+        }
+        for (auto& obj : *(rawData.mutable_ledger_objects()->mutable_objects()))
+        {
+            if (obj.mod_type() != org::xrpl::rpc::v1::RawLedgerObject::MODIFIED)
             {
                 std::string* predPtr = obj.mutable_predecessor();
                 if (!predPtr->size())
@@ -299,13 +300,60 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
 
                 if (obj.mod_type() ==
                     org::xrpl::rpc::v1::RawLedgerObject::DELETED)
-                    successors.emplace_back(
-                        std::move(*predPtr), std::move(*succPtr));
+                    backend_->writeSuccessor(
+                        std::move(*predPtr), lgrInfo.seq, std::move(*succPtr));
                 else
                 {
-                    successors.emplace_back(std::move(*predPtr), obj.key());
-                    successors.emplace_back(obj.key(), std::move(*succPtr));
+                    backend_->writeSuccessor(
+                        std::move(*predPtr),
+                        lgrInfo.seq,
+                        std::string{obj.key()});
+                    backend_->writeSuccessor(
+                        std::string{obj.key()},
+                        lgrInfo.seq,
+                        std::move(*succPtr));
                 }
+            }
+        }
+    }
+    std::vector<Backend::LedgerObject> cacheUpdates;
+    cacheUpdates.reserve(rawData.ledger_objects().objects_size());
+    // TODO change these to unordered_set
+    std::set<ripple::uint256> bookSuccessorsToCalculate;
+    std::set<ripple::uint256> modified;
+    for (auto& obj : *(rawData.mutable_ledger_objects()->mutable_objects()))
+    {
+        auto key = ripple::uint256::fromVoidChecked(obj.key());
+        assert(key);
+        cacheUpdates.push_back(
+            {*key, {obj.mutable_data()->begin(), obj.mutable_data()->end()}});
+
+        if (obj.mod_type() != org::xrpl::rpc::v1::RawLedgerObject::MODIFIED &&
+            !rawData.object_neighbors_included())
+        {
+            assert(backend_->cache().isFull());
+            auto blob = obj.mutable_data();
+            bool checkBookBase = false;
+            bool isDeleted = blob->size() == 0;
+            if (isDeleted)
+            {
+                auto old = backend_->cache().get(*key, lgrInfo.seq - 1);
+                assert(old);
+                checkBookBase = isBookDir(*key, *old);
+            }
+            else
+                checkBookBase = isBookDir(*key, *blob);
+            if (checkBookBase)
+            {
+                auto bookBase = getBookBase(*key);
+                auto oldFirstDir =
+                    backend_->cache().getSuccessor(bookBase, lgrInfo.seq - 1);
+                assert(oldFirstDir);
+                // We deleted the first directory, or we added a directory prior
+                // to the old first directory
+                if ((isDeleted && key == oldFirstDir->key) ||
+                    (!isDeleted && key < oldFirstDir->key))
+                    bookSuccessorsToCalculate.insert(bookBase);
             }
         }
         else
@@ -317,17 +365,10 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
             std::move(*obj.mutable_data()));
     }
     backend_->updateCache(cacheUpdates, lgrInfo.seq);
-    if (!backend_->cache().isFull())
+    // rippled didn't send successor information, so use our cache
+    if (!rawData.object_neighbors_included())
     {
-        assert(successors.size());
-        for (auto&& succ : successors)
-        {
-            backend_->writeSuccessor(
-                std::move(succ.first), lgrInfo.seq, std::move(succ.second));
-        }
-    }
-    else
-    {
+        assert(backend_->cache().isFull());
         for (auto const& obj : cacheUpdates)
         {
             if (modified.contains(obj.key))
@@ -336,7 +377,8 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
             if (!lb)
                 lb = {Backend::firstKey, {}};
             auto ub = backend_->cache().getSuccessor(obj.key, lgrInfo.seq);
-            ub = {Backend::lastKey, {}};
+            if (!ub)
+                ub = {Backend::lastKey, {}};
             if (obj.blob.size() == 0)
                 backend_->writeSuccessor(
                     uint256ToString(lb->key),
@@ -353,6 +395,20 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
                     lgrInfo.seq,
                     uint256ToString(ub->key));
             }
+        }
+        for (auto const& base : bookSuccessorsToCalculate)
+        {
+            auto succ = backend_->cache().getSuccessor(base, lgrInfo.seq);
+            if (succ)
+                backend_->writeSuccessor(
+                    uint256ToString(base),
+                    lgrInfo.seq,
+                    uint256ToString(succ->key));
+            else
+                backend_->writeSuccessor(
+                    uint256ToString(base),
+                    lgrInfo.seq,
+                    uint256ToString(Backend::lastKey));
         }
     }
 
@@ -750,7 +806,6 @@ ReportingETL::monitorReadOnly()
         std::thread t{[this, sequence]() {
             BOOST_LOG_TRIVIAL(info) << "Loading cache";
             loadBalancer_->loadInitialLedger(sequence, true);
-            backend_->cache().setFull();
         }};
         t.detach();
     }

@@ -62,12 +62,14 @@ BackendInterface::fetchLedgerObject(
     auto obj = cache_.get(key, sequence);
     if (obj)
     {
-        BOOST_LOG_TRIVIAL(debug) << __func__ << " - cache hit";
+        BOOST_LOG_TRIVIAL(debug)
+            << __func__ << " - cache hit - " << ripple::strHex(key);
         return *obj;
     }
     else
     {
-        BOOST_LOG_TRIVIAL(debug) << __func__ << " - cache miss";
+        BOOST_LOG_TRIVIAL(debug)
+            << __func__ << " - cache miss - " << ripple::strHex(key);
         auto dbObj = doFetchLedgerObject(key, sequence);
         if (!dbObj)
             BOOST_LOG_TRIVIAL(debug)
@@ -96,13 +98,13 @@ BackendInterface::fetchLedgerObjects(
             misses.push_back(keys[i]);
     }
     BOOST_LOG_TRIVIAL(debug)
-        << __func__ << " - cache hit = " << keys.size() - misses.size()
+        << __func__ << " - cache hits = " << keys.size() - misses.size()
         << " - cache misses = " << misses.size();
 
     if (misses.size())
     {
         auto objs = doFetchLedgerObjects(misses, sequence);
-        for (size_t i, j = 0; i < results.size(); ++i)
+        for (size_t i = 0, j = 0; i < results.size(); ++i)
         {
             if (results[i].size() == 0)
             {
@@ -120,9 +122,11 @@ BackendInterface::fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
 {
     auto succ = cache_.getSuccessor(key, ledgerSequence);
     if (succ)
-        BOOST_LOG_TRIVIAL(debug) << __func__ << " - cache hit";
+        BOOST_LOG_TRIVIAL(debug)
+            << __func__ << " - cache hit - " << ripple::strHex(key);
     else
-        BOOST_LOG_TRIVIAL(debug) << __func__ << " - cache miss";
+        BOOST_LOG_TRIVIAL(debug)
+            << __func__ << " - cache miss - " << ripple::strHex(key);
     return succ ? *succ : doFetchSuccessor(key, ledgerSequence);
 }
 BookOffersPage
@@ -191,9 +195,10 @@ BackendInterface::fetchBookOffers(
     auto objs = fetchLedgerObjects(keys, ledgerSequence);
     for (size_t i = 0; i < keys.size() && i < limit; ++i)
     {
-        BOOST_LOG_TRIVIAL(trace)
+        BOOST_LOG_TRIVIAL(debug)
             << __func__ << " key = " << ripple::strHex(keys[i])
-            << " blob = " << ripple::strHex(objs[i]);
+            << " blob = " << ripple::strHex(objs[i])
+            << " ledgerSequence = " << ledgerSequence;
         assert(objs[i].size());
         page.offers.push_back({keys[i], objs[i]});
     }

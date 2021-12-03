@@ -533,7 +533,7 @@ public:
         bool abort,
         bool cacheOnly = false)
     {
-        BOOST_LOG_TRIVIAL(debug) << "Processing response. "
+        BOOST_LOG_TRIVIAL(trace) << "Processing response. "
                                  << "Marker prefix = " << getMarkerPrefix();
         if (abort)
         {
@@ -584,11 +584,9 @@ public:
             cacheUpdates.push_back(
                 {*ripple::uint256::fromVoidChecked(obj.key()),
                  {obj.mutable_data()->begin(), obj.mutable_data()->end()}});
-            BOOST_LOG_TRIVIAL(debug)
-                << __func__
-                << " - id = " << *ripple::uint256::fromVoidChecked(obj.key());
             if (!cacheOnly)
             {
+                /*
                 if (cur_->object_neighbors_included())
                 {
                     std::string* predPtr = obj.mutable_predecessor();
@@ -618,13 +616,32 @@ public:
                 }
                 else
                     assert(backend.cache().isEnabled());
-                // TODO allow rippled to send neighbor info
+                    */
                 backend.writeLedgerObject(
                     std::move(*obj.mutable_key()),
                     request_.ledger().sequence(),
                     std::move(*obj.mutable_data()));
             }
         }
+        /*
+        if (cur_->object_neighbors_included())
+        {
+            for (auto& obj : *(cur_->mutable_book_successors()))
+            {
+                BOOST_LOG_TRIVIAL(debug)
+                    << __func__ << " writing book successor "
+                    << ripple::strHex(
+                           obj.book_base().begin(), obj.book_base().end())
+                    << " - "
+                    << ripple::strHex(
+                           obj.first_book().begin(), obj.first_book().end());
+                backend.writeSuccessor(
+                    std::move(*obj.mutable_book_base()),
+                    request_.ledger().sequence(),
+                    std::move(*obj.mutable_first_book()));
+            }
+        }
+        */
         backend.updateCache(cacheUpdates, request_.ledger().sequence());
         BOOST_LOG_TRIVIAL(trace) << "Wrote objects";
 
@@ -636,7 +653,8 @@ public:
         std::unique_ptr<org::xrpl::rpc::v1::XRPLedgerAPIService::Stub>& stub,
         grpc::CompletionQueue& cq)
     {
-        BOOST_LOG_TRIVIAL(info) << "Making next request. " << getMarkerPrefix();
+        BOOST_LOG_TRIVIAL(trace)
+            << "Making next request. " << getMarkerPrefix();
         context_ = std::make_unique<grpc::ClientContext>();
 
         std::unique_ptr<grpc::ClientAsyncResponseReader<
@@ -674,15 +692,14 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
     BOOST_LOG_TRIVIAL(info) << "Starting data download for ledger " << sequence
                             << ". Using source = " << toString();
     std::vector<AsyncCallData> calls;
-    std::vector<ripple::uint256> markers{getMarkers(16)};
+    std::vector<ripple::uint256> markers{getMarkers(64)};
 
     for (size_t i = 0; i < markers.size(); ++i)
     {
         std::optional<ripple::uint256> nextMarker;
         if (i + 1 < markers.size())
             nextMarker = markers[i + 1];
-        calls.emplace_back(
-            sequence, markers[i], nextMarker, !backend_->cache().isEnabled());
+        calls.emplace_back(sequence, markers[i], nextMarker, false);
     }
 
     for (auto& c : calls)
@@ -704,7 +721,7 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
         }
         else
         {
-            BOOST_LOG_TRIVIAL(info)
+            BOOST_LOG_TRIVIAL(trace)
                 << "Marker prefix = " << ptr->getMarkerPrefix();
             auto result = ptr->process(stub_, cq, *backend_, abort, cacheOnly);
             if (result != AsyncCallData::CallStatus::MORE)
@@ -718,32 +735,64 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
             {
                 abort = true;
             }
+            BOOST_LOG_TRIVIAL(info) << "Downloaded " << backend_->cache().size()
+                                    << " records from rippled";
         }
     }
     BOOST_LOG_TRIVIAL(info)
         << __func__ << " - finished loadInitialLedger. cache size = "
         << backend_->cache().size();
-    if (!abort && !cacheOnly && backend_->cache().isEnabled())
+    size_t numWrites = 0;
+    if (!abort && backend_->cache().isEnabled())
     {
-        auto start = std::chrono::system_clock::now();
-        ripple::uint256 prev = Backend::firstKey;
-        while (auto cur = backend_->cache().getSuccessor(prev, sequence))
+        backend_->cache().setFull();
+        if (!cacheOnly)
         {
-            assert(cur);
+            auto start = std::chrono::system_clock::now();
+            ripple::uint256 prev = Backend::firstKey;
+            while (auto cur = backend_->cache().getSuccessor(prev, sequence))
+            {
+                assert(cur);
+                backend_->writeSuccessor(
+                    uint256ToString(prev), sequence, uint256ToString(cur->key));
+                if (isBookDir(cur->key, cur->blob))
+                {
+                    auto base = getBookBase(cur->key);
+                    auto succ = backend_->cache().getSuccessor(base, sequence);
+                    assert(succ);
+                    if (succ->key == cur->key)
+                    {
+                        BOOST_LOG_TRIVIAL(debug)
+                            << __func__ << " Writing book successor = "
+                            << ripple::strHex(base) << " - "
+                            << ripple::strHex(cur->key);
+                        backend_->writeSuccessor(
+                            uint256ToString(base),
+                            sequence,
+                            uint256ToString(cur->key));
+                    }
+                }
+                prev = std::move(cur->key);
+                ++numWrites;
+                if (numWrites % 100000 == 0)
+                    BOOST_LOG_TRIVIAL(info)
+                        << __func__ << " Wrote " << numWrites << " successors";
+            }
             backend_->writeSuccessor(
-                uint256ToString(prev), sequence, uint256ToString(cur->key));
-            prev = std::move(cur->key);
+                uint256ToString(prev),
+                sequence,
+                uint256ToString(Backend::lastKey));
+            ++numWrites;
+            auto end = std::chrono::system_clock::now();
+            auto seconds =
+                std::chrono::duration_cast<std::chrono::seconds>(end - start)
+                    .count();
+            BOOST_LOG_TRIVIAL(info)
+                << __func__
+                << " - Looping through cache and submitting all writes took "
+                << seconds
+                << " seconds. numWrites = " << std::to_string(numWrites);
         }
-        backend_->writeSuccessor(
-            uint256ToString(prev), sequence, uint256ToString(Backend::lastKey));
-        auto end = std::chrono::system_clock::now();
-        auto seconds =
-            std::chrono::duration_cast<std::chrono::seconds>(end - start)
-                .count();
-        BOOST_LOG_TRIVIAL(info)
-            << __func__
-            << " - Looping through cache and submitting all writes took "
-            << seconds << " seconds";
     }
     return !abort;
 }
