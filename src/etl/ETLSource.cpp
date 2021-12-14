@@ -489,6 +489,8 @@ class AsyncCallData
     grpc::Status status_;
     unsigned char nextPrefix_;
 
+    std::string lastKey_;
+
 public:
     AsyncCallData(
         uint32_t seq,
@@ -617,6 +619,12 @@ public:
                 else
                     assert(backend.cache().isEnabled());
                     */
+                if (lastKey_.size())
+                    backend.writeSuccessor(
+                        std::move(lastKey_),
+                        request_.ledger().sequence(),
+                        std::string{obj.key()});
+                lastKey_ = obj.key();
                 backend.writeLedgerObject(
                     std::move(*obj.mutable_key()),
                     request_.ledger().sequence(),
@@ -674,6 +682,12 @@ public:
         else
             return ripple::strHex(std::string{next_->marker().data()[0]});
     }
+
+    std::string
+    getLastKey()
+    {
+        return lastKey_;
+    }
 };
 
 template <class Derived>
@@ -709,6 +723,7 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
     bool abort = false;
     size_t incr = 500000;
     size_t progress = incr;
+    std::vector<std::string> edgeKeys;
     while (numFinished < calls.size() && cq.Next(&tag, &ok))
     {
         assert(tag);
@@ -732,6 +747,7 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
                 BOOST_LOG_TRIVIAL(info)
                     << "Finished a marker. "
                     << "Current number of finished = " << numFinished;
+                edgeKeys.push_back(ptr->getLastKey());
             }
             if (result == AsyncCallData::CallStatus::ERRORED)
             {
@@ -756,12 +772,23 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
         if (!cacheOnly)
         {
             auto start = std::chrono::system_clock::now();
+            for (auto& key : edgeKeys)
+            {
+                auto succ = backend_->cache().getSuccessor(
+                    *ripple::uint256::fromVoidChecked(key), sequence);
+                if (succ)
+                    backend_->writeSuccessor(
+                        std::move(key), sequence, uint256ToString(succ->key));
+            }
             ripple::uint256 prev = Backend::firstKey;
             while (auto cur = backend_->cache().getSuccessor(prev, sequence))
             {
                 assert(cur);
-                backend_->writeSuccessor(
-                    uint256ToString(prev), sequence, uint256ToString(cur->key));
+                if (prev == Backend::firstKey)
+                    backend_->writeSuccessor(
+                        uint256ToString(prev),
+                        sequence,
+                        uint256ToString(cur->key));
                 if (isBookDir(cur->key, cur->blob))
                 {
                     auto base = getBookBase(cur->key);
@@ -778,12 +805,12 @@ ETLSourceImpl<Derived>::loadInitialLedger(uint32_t sequence, bool cacheOnly)
                             sequence,
                             uint256ToString(cur->key));
                     }
+                    ++numWrites;
                 }
                 prev = std::move(cur->key);
-                ++numWrites;
                 if (numWrites % 100000 == 0)
-                    BOOST_LOG_TRIVIAL(info)
-                        << __func__ << " Wrote " << numWrites << " successors";
+                    BOOST_LOG_TRIVIAL(info) << __func__ << " Wrote "
+                                            << numWrites << " book successors";
             }
             backend_->writeSuccessor(
                 uint256ToString(prev),

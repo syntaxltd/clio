@@ -248,7 +248,7 @@ ReportingETL::fetchLedgerDataAndDiff(uint32_t idx)
         << "Attempting to fetch ledger with sequence = " << idx;
 
     std::optional<org::xrpl::rpc::v1::GetLedgerResponse> response =
-        loadBalancer_->fetchLedger(idx, true, !backend_->cache().isFull());
+        loadBalancer_->fetchLedger(idx, true, true);
     BOOST_LOG_TRIVIAL(trace) << __func__ << " : "
                              << "GetLedger reply = " << response->DebugString();
     return response;
@@ -275,6 +275,7 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
                              << "wrote ledger header";
 
     // Write successor info, if included from rippled
+    // std::vector<std::pair<std::string, std::string>> successors;
     if (rawData.object_neighbors_included())
     {
         BOOST_LOG_TRIVIAL(debug) << __func__ << " object neighbors included";
@@ -311,6 +312,7 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
                         << ripple::strHex(obj.key()) << " - "
                         << ripple::strHex(*predPtr) << " - "
                         << ripple::strHex(*succPtr);
+                    // successors.push_back({*predPtr, *succPtr});
                     backend_->writeSuccessor(
                         std::move(*predPtr), lgrInfo.seq, std::move(*succPtr));
                 }
@@ -321,6 +323,8 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
                         << ripple::strHex(obj.key()) << " - "
                         << ripple::strHex(*predPtr) << " - "
                         << ripple::strHex(*succPtr);
+                    //              successors.push_back({*predPtr, obj.key()});
+                    //            successors.push_back({obj.key(), *succPtr});
                     backend_->writeSuccessor(
                         std::move(*predPtr),
                         lgrInfo.seq,
@@ -390,7 +394,7 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
                 }
             }
         }
-        else
+        if (obj.mod_type() == org::xrpl::rpc::v1::RawLedgerObject::MODIFIED)
             modified.insert(*key);
 
         backend_->writeLedgerObject(
@@ -400,11 +404,12 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
     }
     backend_->updateCache(cacheUpdates, lgrInfo.seq);
     // rippled didn't send successor information, so use our cache
-    if (!rawData.object_neighbors_included())
+    if (!rawData.object_neighbors_included() || backend_->cache().isFull())
     {
         BOOST_LOG_TRIVIAL(debug)
             << __func__ << " object neighbors not included. using cache";
         assert(backend_->cache().isFull());
+        size_t idx = 0;
         for (auto const& obj : cacheUpdates)
         {
             if (modified.contains(obj.key))
@@ -426,6 +431,9 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
                     uint256ToString(lb->key),
                     lgrInfo.seq,
                     uint256ToString(ub->key));
+                //     auto [pred, succ] = successors[idx++];
+                //      assert(uint256ToString(lb->key) == pred);
+                //      assert(uint256ToString(ub->key) == succ);
             }
             else
             {
@@ -437,11 +445,21 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
                     uint256ToString(obj.key),
                     lgrInfo.seq,
                     uint256ToString(ub->key));
+                //   auto [pred, succ] = successors[idx++];
+                //   auto [pred2, succ2] = successors[idx++];
                 BOOST_LOG_TRIVIAL(debug)
                     << __func__ << " writing successor for new object "
                     << ripple::strHex(lb->key) << " - "
                     << ripple::strHex(obj.key) << " - "
-                    << ripple::strHex(ub->key);
+                    << ripple::strHex(
+                           ub->key);  // << " - " << ripple::strHex(pred)
+                /*  << " - " << ripple::strHex(succ) << " - "
+                  << ripple::strHex(pred2) << " - " << ripple::strHex(succ2);
+              assert(uint256ToString(lb->key) == pred);
+              assert(uint256ToString(obj.key) == succ);
+              assert(uint256ToString(obj.key) == pred2);
+              assert(uint256ToString(ub->key) == succ2);
+              */
             }
         }
         for (auto const& base : bookSuccessorsToCalculate)

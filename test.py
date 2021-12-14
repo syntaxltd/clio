@@ -451,9 +451,9 @@ async def ledger_data(ip, port, ledger, limit, binary, cursor):
     try:
         async with websockets.connect(address) as ws:
             if limit is not None:
-                await ws.send(json.dumps({"command":"ledger_data","ledger_index":int(ledger),"binary":bool(binary),"limit":int(limit),"cursor":cursor}))
+                await ws.send(json.dumps({"command":"ledger_data","ledger_index":int(ledger),"binary":bool(binary),"limit":int(limit),"cursor":cursor,"marker":cursor}))
             else:
-                await ws.send(json.dumps({"command":"ledger_data","ledger_index":int(ledger),"binary":bool(binary),"cursor":cursor}))
+                await ws.send(json.dumps({"command":"ledger_data","ledger_index":int(ledger),"binary":bool(binary),"cursor":cursor,"marker":cursor}))
             res = json.loads(await ws.recv())
             print(res)
             objects = []
@@ -614,7 +614,7 @@ async def book_offers(ip, port, ledger, pay_currency, pay_issuer, get_currency, 
                     req["cursor"] = cursor
                 await ws.send(json.dumps(req))
                 res = json.loads(await ws.recv())
-                #print(json.dumps(res,indent=4,sort_keys=True))
+                print(json.dumps(res,indent=4,sort_keys=True))
                 if "result" in res:
                     res = res["result"]
                 for x in res["offers"]:
