@@ -830,7 +830,7 @@ CREATE TABLE IF NOT EXISTS successor (
     key bytea NOT NULL, 
     ledger_seq bigint NOT NULL,
     next bytea NOT NULL,
-    PRIMARY KEY(key, seq)
+    PRIMARY KEY(key, ledger_seq)
 );
 
 
