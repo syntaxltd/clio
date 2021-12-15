@@ -358,9 +358,10 @@ PostgresBackend::fetchAllTransactionHashesInLedger(
     }
     return {};
 }
-std::optional<LedgerObject>
-PostgresBackend::doFetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
-    const
+std::optional<ripple::uint256>
+PostgresBackend::doFetchSuccessorKey(
+    ripple::uint256 key,
+    uint32_t ledgerSequence) const
 {
     PgQuery pgQuery(pgPool_);
     pgQuery("SET statement_timeout TO 10000");
@@ -375,9 +376,7 @@ PostgresBackend::doFetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
         auto next = res.asUInt256(0, 0);
         if (next == lastKey)
             return {};
-        auto obj = fetchLedgerObject(next, ledgerSequence);
-        assert(obj);
-        return {{next, *obj}};
+        return next;
     }
 
     return {};

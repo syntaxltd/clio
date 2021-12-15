@@ -110,9 +110,10 @@ BackendInterface::fetchLedgerObjects(
     return results;
 }
 // Fetches the successor to key/index
-std::optional<LedgerObject>
-BackendInterface::fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
-    const
+std::optional<ripple::uint256>
+BackendInterface::fetchSuccessorKey(
+    ripple::uint256 key,
+    uint32_t ledgerSequence) const
 {
     auto succ = cache_.getSuccessor(key, ledgerSequence);
     if (succ)
@@ -121,7 +122,21 @@ BackendInterface::fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
     else
         BOOST_LOG_TRIVIAL(debug)
             << __func__ << " - cache miss - " << ripple::strHex(key);
-    return succ ? *succ : doFetchSuccessor(key, ledgerSequence);
+    return succ ? succ->key : doFetchSuccessorKey(key, ledgerSequence);
+}
+std::optional<LedgerObject>
+BackendInterface::fetchSuccessorObject(
+    ripple::uint256 key,
+    uint32_t ledgerSequence) const
+{
+    auto succ = fetchSuccessorKey(key, ledgerSequence);
+    if (succ)
+    {
+        auto obj = fetchLedgerObject(*succ, ledgerSequence);
+        assert(obj);
+        return {{*succ, *obj}};
+    }
+    return {};
 }
 BookOffersPage
 BackendInterface::fetchBookOffers(
@@ -149,7 +164,7 @@ BackendInterface::fetchBookOffers(
     while (keys.size() < limit)
     {
         auto mid1 = std::chrono::system_clock::now();
-        auto offerDir = fetchSuccessor(uTipIndex, ledgerSequence);
+        auto offerDir = fetchSuccessorObject(uTipIndex, ledgerSequence);
         auto mid2 = std::chrono::system_clock::now();
         numSucc++;
         succMillis += getMillis(mid2 - mid1);
@@ -224,18 +239,24 @@ BackendInterface::fetchLedgerPage(
 {
     LedgerPage page;
 
-    while (page.objects.size() < limit)
+    std::vector<ripple::uint256> keys;
+    while (keys.size() < limit)
     {
-        ripple::uint256 const& curCursor = page.objects.size()
-            ? page.objects.back().key
-            : cursor ? *cursor : firstKey;
-        auto succ = fetchSuccessor(curCursor, ledgerSequence);
+        ripple::uint256 const& curCursor =
+            keys.size() ? keys.back() : cursor ? *cursor : firstKey;
+        auto succ = fetchSuccessorKey(curCursor, ledgerSequence);
         if (!succ)
-            return page;
-        page.objects.push_back(*succ);
+            break;
+        keys.push_back(std::move(*succ));
     }
 
-    if (page.objects.size())
+    auto objects = fetchLedgerObjects(keys, ledgerSequence);
+    for (size_t i = 0; i < objects.size(); ++i)
+    {
+        assert(objects[i].size());
+        page.objects.push_back({std::move(keys[i]), std::move(objects[i])});
+    }
+    if (page.objects.size() >= limit)
         page.cursor = page.objects.back().key;
     return page;
 }

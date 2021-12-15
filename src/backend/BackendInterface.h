@@ -136,10 +136,13 @@ public:
 
     // Fetches the successor to key/index
     std::optional<LedgerObject>
-    fetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence) const;
+    fetchSuccessorObject(ripple::uint256 key, uint32_t ledgerSequence) const;
+
+    std::optional<ripple::uint256>
+    fetchSuccessorKey(ripple::uint256 key, uint32_t ledgerSequence) const;
     // Fetches the successor to key/index
-    virtual std::optional<LedgerObject>
-    doFetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence) const = 0;
+    virtual std::optional<ripple::uint256>
+    doFetchSuccessorKey(ripple::uint256 key, uint32_t ledgerSequence) const = 0;
 
     BookOffersPage
     fetchBookOffers(

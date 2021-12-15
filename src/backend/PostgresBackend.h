@@ -52,8 +52,8 @@ public:
     std::optional<LedgerRange>
     hardFetchLedgerRange() const override;
 
-    std::optional<LedgerObject>
-    doFetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
+    std::optional<ripple::uint256>
+    doFetchSuccessorKey(ripple::uint256 key, uint32_t ledgerSequence)
         const override;
 
     std::vector<TransactionAndMetadata>

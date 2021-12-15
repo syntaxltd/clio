@@ -551,9 +551,10 @@ CassandraBackend::fetchAccountTransactions(
     }
     return {txns, {}};
 }
-std::optional<LedgerObject>
-CassandraBackend::doFetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
-    const
+std::optional<ripple::uint256>
+CassandraBackend::doFetchSuccessorKey(
+    ripple::uint256 key,
+    uint32_t ledgerSequence) const
 {
     BOOST_LOG_TRIVIAL(trace) << "Fetching from cassandra";
     CassandraStatement statement{selectSuccessor_};
@@ -568,9 +569,7 @@ CassandraBackend::doFetchSuccessor(ripple::uint256 key, uint32_t ledgerSequence)
     auto next = result.getUInt256();
     if (next == lastKey)
         return {};
-    auto obj = fetchLedgerObject(next, ledgerSequence);
-    assert(obj);
-    return {{next, *obj}};
+    return next;
 }
 std::optional<Blob>
 CassandraBackend::doFetchLedgerObject(
