@@ -9,13 +9,12 @@
 #include <backend/BackendFactory.h>
 #include <backend/BackendInterface.h>
 
-// Demonstrate some basic assertions.
 TEST(BackendTest, Basic)
 {
     boost::log::core::get()->set_filter(
         boost::log::trivial::severity >= boost::log::trivial::warning);
     std::string keyspace =
-        "oceand_test_" +
+        "clio_test_" +
         std::to_string(
             std::chrono::system_clock::now().time_since_epoch().count());
     boost::json::object cassandraConfig{
@@ -643,6 +642,7 @@ TEST(BackendTest, Basic)
                         (const char*)meta.data(), (const char*)expMeta.data());
                 }
             }
+            std::vector<ripple::uint256> keys;
             for (auto [key, obj] : objs)
             {
                 auto retObj =
@@ -656,6 +656,29 @@ TEST(BackendTest, Basic)
                 else
                 {
                     ASSERT_FALSE(retObj.has_value());
+                }
+                keys.push_back(binaryStringToUint256(key));
+            }
+
+            {
+                auto retObjs = backend->fetchLedgerObjects(keys, seq);
+                ASSERT_EQ(retObjs.size(), objs.size());
+
+                for (size_t i = 0; i < keys.size(); ++i)
+                {
+                    auto [key, obj] = objs[i];
+                    auto retObj = retObjs[i];
+                    if (obj.size())
+                    {
+                        ASSERT_TRUE(retObj.size());
+                        EXPECT_STREQ(
+                            (const char*)obj.data(),
+                            (const char*)retObj.data());
+                    }
+                    else
+                    {
+                        ASSERT_FALSE(retObj.size());
+                    }
                 }
             }
             Backend::LedgerPage page;
@@ -831,5 +854,141 @@ TEST(BackendTest, Basic)
             std::cout << "checked" << std::endl;
         }
     }
+}
+
+TEST(Backend, cache)
+{
+    using namespace Backend;
+    boost::log::core::get()->set_filter(
+        boost::log::trivial::severity >= boost::log::trivial::warning);
+    SimpleCache cache;
+    ASSERT_FALSE(cache.isFull());
+    cache.setFull();
+
+    // Nothing in cache
+    {
+        ASSERT_TRUE(cache.isFull());
+        ASSERT_EQ(cache.size(), 0);
+        ASSERT_FALSE(cache.get(ripple::uint256{12}, 0));
+        ASSERT_FALSE(cache.getSuccessor(firstKey, 0));
+        ASSERT_FALSE(cache.getPredecessor(lastKey, 0));
+    }
+
+    // insert
+    uint32_t curSeq = 1;
+    std::vector<LedgerObject> objs;
+    objs.push_back({});
+    objs[0] = {ripple::uint256{42}, {0xCC}};
+    auto& obj = objs[0];
+    cache.update(objs, curSeq);
+    {
+        ASSERT_TRUE(cache.isFull());
+        ASSERT_EQ(cache.size(), 1);
+        auto cacheObj = cache.get(obj.key, curSeq);
+        ASSERT_TRUE(cacheObj);
+        ASSERT_EQ(*cacheObj, obj.blob);
+        ASSERT_FALSE(cache.get(obj.key, curSeq + 1));
+        ASSERT_FALSE(cache.get(obj.key, curSeq - 1));
+        ASSERT_FALSE(cache.getSuccessor(obj.key, curSeq));
+        ASSERT_FALSE(cache.getPredecessor(obj.key, curSeq));
+        auto succ = cache.getSuccessor(firstKey, curSeq);
+        ASSERT_TRUE(succ);
+        ASSERT_EQ(*succ, obj);
+        auto pred = cache.getPredecessor(lastKey, curSeq);
+        ASSERT_TRUE(pred);
+        ASSERT_EQ(pred, obj);
+    }
+    // update
+    curSeq++;
+    obj.blob = {0x01};
+    cache.update(objs, curSeq);
+    {
+        ASSERT_EQ(cache.size(), 1);
+        auto cacheObj = cache.get(obj.key, curSeq);
+        ASSERT_TRUE(cacheObj);
+        ASSERT_EQ(*cacheObj, obj.blob);
+        ASSERT_FALSE(cache.get(obj.key, curSeq + 1));
+        ASSERT_FALSE(cache.get(obj.key, curSeq - 1));
+        ASSERT_TRUE(cache.isFull());
+        ASSERT_FALSE(cache.getSuccessor(obj.key, curSeq));
+        ASSERT_FALSE(cache.getPredecessor(obj.key, curSeq));
+        auto succ = cache.getSuccessor(firstKey, curSeq);
+        ASSERT_TRUE(succ);
+        ASSERT_EQ(*succ, obj);
+        auto pred = cache.getPredecessor(lastKey, curSeq);
+        ASSERT_TRUE(pred);
+        ASSERT_EQ(*pred, obj);
+    }
+    // empty update
+    curSeq++;
+    cache.update({}, curSeq);
+    {
+        ASSERT_EQ(cache.size(), 1);
+        auto cacheObj = cache.get(obj.key, curSeq);
+        ASSERT_TRUE(cacheObj);
+        ASSERT_EQ(*cacheObj, obj.blob);
+        ASSERT_TRUE(cache.get(obj.key, curSeq - 1));
+        ASSERT_FALSE(cache.get(obj.key, curSeq - 2));
+        ASSERT_EQ(*cache.get(obj.key, curSeq - 1), obj.blob);
+        ASSERT_FALSE(cache.getSuccessor(obj.key, curSeq));
+        ASSERT_FALSE(cache.getPredecessor(obj.key, curSeq));
+        auto succ = cache.getSuccessor(firstKey, curSeq);
+        ASSERT_TRUE(succ);
+        ASSERT_EQ(*succ, obj);
+        auto pred = cache.getPredecessor(lastKey, curSeq);
+        ASSERT_TRUE(pred);
+        ASSERT_EQ(*pred, obj);
+    }
+    // delete
+    curSeq++;
+    obj.blob = {};
+    cache.update(objs, curSeq);
+    {
+        ASSERT_EQ(cache.size(), 0);
+        auto cacheObj = cache.get(obj.key, curSeq);
+        ASSERT_FALSE(cacheObj);
+        ASSERT_FALSE(cache.get(obj.key, curSeq + 1));
+        ASSERT_FALSE(cache.get(obj.key, curSeq - 1));
+        ASSERT_TRUE(cache.isFull());
+        ASSERT_FALSE(cache.getSuccessor(obj.key, curSeq));
+        ASSERT_FALSE(cache.getPredecessor(obj.key, curSeq));
+        ASSERT_FALSE(cache.getSuccessor(firstKey, curSeq));
+        ASSERT_FALSE(cache.getPredecessor(lastKey, curSeq));
+    }
+    // random non-existent object
+    {
+        ASSERT_FALSE(cache.get(ripple::uint256{23}, curSeq));
+    }
+
+    // insert several objects
+    curSeq++;
+    objs.resize(10);
+    for (size_t i = 0; i < objs.size(); ++i)
+    {
+        objs[i] = {
+            ripple::uint256{i * 100 + 1},
+            {(unsigned char)i, (unsigned char)i * 2, (unsigned char)i + 1}};
+    }
+    cache.update(objs, curSeq);
+    {
+        ASSERT_EQ(cache.size(), 10);
+        for (auto& obj : objs)
+        {
+            auto cacheObj = cache.get(obj.key, curSeq);
+            ASSERT_TRUE(cacheObj);
+            ASSERT_EQ(*cacheObj, obj.blob);
+            ASSERT_FALSE(cache.get(obj.key, curSeq - 1));
+            ASSERT_FALSE(cache.get(obj.key, curSeq + 1));
+        }
+
+        std::optional<LedgerObject> succ = {{firstKey, {}}};
+        size_t idx = 0;
+        while ((succ = cache.getSuccessor(succ->key, curSeq)))
+        {
+            ASSERT_EQ(*succ, objs[idx++]);
+        }
+        ASSERT_EQ(idx, objs.size());
+    }
+    std::cout << "yes the test ran" << std::endl;
 }
 
