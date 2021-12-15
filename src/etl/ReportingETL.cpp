@@ -133,7 +133,7 @@ ReportingETL::publishLedger(ripple::LedgerInfo const& lgrInfo)
     {
         BOOST_LOG_TRIVIAL(debug) << __func__ << " - Updating cache";
         auto diff = backend_->fetchLedgerDiff(lgrInfo.seq);
-        backend_->updateCache(diff, lgrInfo.seq);
+        backend_->cache().update(diff, lgrInfo.seq);
     }
     backend_->updateRange(lgrInfo.seq);
     auto ledgerRange = backend_->fetchLedgerRange();
@@ -248,7 +248,7 @@ ReportingETL::fetchLedgerDataAndDiff(uint32_t idx)
         << "Attempting to fetch ledger with sequence = " << idx;
 
     std::optional<org::xrpl::rpc::v1::GetLedgerResponse> response =
-        loadBalancer_->fetchLedger(idx, true, true);
+        loadBalancer_->fetchLedger(idx, true, !backend_->cache().isFull());
     BOOST_LOG_TRIVIAL(trace) << __func__ << " : "
                              << "GetLedger reply = " << response->DebugString();
     return response;
@@ -402,7 +402,7 @@ ReportingETL::buildNextLedger(org::xrpl::rpc::v1::GetLedgerResponse& rawData)
             lgrInfo.seq,
             std::move(*obj.mutable_data()));
     }
-    backend_->updateCache(cacheUpdates, lgrInfo.seq);
+    backend_->cache().update(cacheUpdates, lgrInfo.seq);
     // rippled didn't send successor information, so use our cache
     if (!rawData.object_neighbors_included() || backend_->cache().isFull())
     {

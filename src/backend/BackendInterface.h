@@ -176,9 +176,6 @@ protected:
             range->maxSequence = newMax;
     }
 
-    void
-    updateCache(std::vector<LedgerObject> const& updates, uint32_t seq) const;
-
     virtual void
     writeLedger(
         ripple::LedgerInfo const& ledgerInfo,

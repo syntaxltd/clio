@@ -650,7 +650,8 @@ public:
             }
         }
         */
-        backend.updateCache(cacheUpdates, request_.ledger().sequence());
+        backend.cache().update(
+            cacheUpdates, request_.ledger().sequence(), cacheOnly);
         BOOST_LOG_TRIVIAL(trace) << "Wrote objects";
 
         return more ? CallStatus::MORE : CallStatus::DONE;
@@ -860,6 +861,8 @@ ETLSourceImpl<Derived>::fetchLedger(
                "correctly on the ETL source. source = "
             << toString() << " status = " << status.error_message();
     }
+    // BOOST_LOG_TRIVIAL(debug)
+    //    << __func__ << " Message size = " << response.ByteSizeLong();
     return {status, std::move(response)};
 }
 

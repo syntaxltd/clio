@@ -2,6 +2,7 @@
 #define CLIO_SIMPLECACHE_H_INCLUDED
 
 #include <ripple/basics/base_uint.h>
+#include <ripple/basics/hardened_hash.h>
 #include <backend/Types.h>
 #include <map>
 #include <mutex>
@@ -21,10 +22,14 @@ class SimpleCache
     uint32_t latestSeq_ = 0;
     std::atomic_bool enabled_ = true;
     std::atomic_bool full_ = false;
+    std::unordered_set<ripple::uint256, ripple::hardened_hash<>> deletes_;
 
 public:
     void
-    update(std::vector<LedgerObject> const& blobs, uint32_t seq);
+    update(
+        std::vector<LedgerObject> const& blobs,
+        uint32_t seq,
+        bool isBackground = false);
 
     std::optional<Blob>
     get(ripple::uint256 const& key, uint32_t seq) const;

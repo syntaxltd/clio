@@ -2,7 +2,10 @@
 namespace Backend {
 
 void
-SimpleCache::update(std::vector<LedgerObject> const& objs, uint32_t seq)
+SimpleCache::update(
+    std::vector<LedgerObject> const& objs,
+    uint32_t seq,
+    bool isBackground)
 {
     if (!enabled_)
         return;
@@ -16,6 +19,8 @@ SimpleCache::update(std::vector<LedgerObject> const& objs, uint32_t seq)
     {
         if (obj.blob.size())
         {
+            if (isBackground && deletes_.count(obj.key))
+                continue;
             auto& e = map_[obj.key];
             if (seq > e.seq)
             {
@@ -25,6 +30,8 @@ SimpleCache::update(std::vector<LedgerObject> const& objs, uint32_t seq)
         else
         {
             map_.erase(obj.key);
+            if (!full_ && !isBackground)
+                deletes_.insert(obj.key);
         }
     }
 }
@@ -73,6 +80,8 @@ void
 SimpleCache::setFull()
 {
     full_ = true;
+    std::unique_lock lck{mtx_};
+    deletes_.clear();
 }
 void
 SimpleCache::disable()
