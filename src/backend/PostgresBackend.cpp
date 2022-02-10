@@ -632,8 +632,7 @@ PostgresBackend::fetchAccountTransactions(
 void
 PostgresBackend::open(bool readOnly)
 {
-    if (!readOnly)
-        initSchema(pgPool_);
+    initSchema(pgPool_);
     initAccountTx(pgPool_);
 }
 
