@@ -764,13 +764,10 @@ ETLSourceImpl<Derived>::loadInitialLedger(
             {
                 assert(cur);
                 if (prev == Backend::firstKey)
-                {
                     backend_->writeSuccessor(
                         uint256ToString(prev),
                         sequence,
                         uint256ToString(cur->key));
-                }
-
                 if (isBookDir(cur->key, cur->blob))
                 {
                     auto base = getBookBase(cur->key);
@@ -786,7 +783,6 @@ ETLSourceImpl<Derived>::loadInitialLedger(
                                 << __func__ << " Writing book successor = "
                                 << ripple::strHex(base) << " - "
                                 << ripple::strHex(cur->key);
-
                             backend_->writeSuccessor(
                                 uint256ToString(base),
                                 sequence,
@@ -800,12 +796,10 @@ ETLSourceImpl<Derived>::loadInitialLedger(
                     BOOST_LOG_TRIVIAL(info) << __func__ << " Wrote "
                                             << numWrites << " book successors";
             }
-
             backend_->writeSuccessor(
                 uint256ToString(prev),
                 sequence,
                 uint256ToString(Backend::lastKey));
-
             ++numWrites;
             auto end = std::chrono::system_clock::now();
             auto seconds =
@@ -950,16 +944,14 @@ ETLLoadBalancer::fetchLedger(
 std::optional<boost::json::object>
 ETLLoadBalancer::forwardToRippled(
     boost::json::object const& request,
-    std::string const& clientIp,
-    boost::asio::yield_context& yield) const
+    std::string const& clientIp) const
 {
     srand((unsigned)time(0));
     auto sourceIdx = rand() % sources_.size();
     auto numAttempts = 0;
     while (numAttempts < sources_.size())
     {
-        if (auto res =
-                sources_[sourceIdx]->forwardToRippled(request, clientIp, yield))
+        if (auto res = sources_[sourceIdx]->forwardToRippled(request, clientIp))
             return res;
 
         sourceIdx = (sourceIdx + 1) % sources_.size();
@@ -972,8 +964,7 @@ template <class Derived>
 std::optional<boost::json::object>
 ETLSourceImpl<Derived>::forwardToRippled(
     boost::json::object const& request,
-    std::string const& clientIp,
-    boost::asio::yield_context& yield) const
+    std::string const& clientIp) const
 {
     BOOST_LOG_TRIVIAL(debug) << "Attempting to forward request to tx. "
                              << "request = " << boost::json::serialize(request);
@@ -992,25 +983,21 @@ ETLSourceImpl<Derived>::forwardToRippled(
     using tcp = boost::asio::ip::tcp;        // from
     try
     {
-        boost::beast::error_code ec;
+        // The io_context is required for all I/O
+        net::io_context ioc;
+
         // These objects perform our I/O
-        tcp::resolver resolver{ioc_};
+        tcp::resolver resolver{ioc};
 
         BOOST_LOG_TRIVIAL(debug) << "Creating websocket";
-        auto ws = std::make_unique<websocket::stream<beast::tcp_stream>>(ioc_);
+        auto ws = std::make_unique<websocket::stream<tcp::socket>>(ioc);
 
         // Look up the domain name
-        auto const results = resolver.async_resolve(ip_, wsPort_, yield[ec]);
-        if (ec)
-            return {};
-
-        ws->next_layer().expires_after(std::chrono::seconds(30));
+        auto const results = resolver.resolve(ip_, wsPort_);
 
         BOOST_LOG_TRIVIAL(debug) << "Connecting websocket";
         // Make the connection on the IP address we get from a lookup
-        ws->next_layer().async_connect(results, yield[ec]);
-        if (ec)
-            return {};
+        net::connect(ws->next_layer(), results.begin(), results.end());
 
         // Set a decorator to change the User-Agent of the handshake
         // and to tell rippled to charge the client IP for RPC
@@ -1029,21 +1016,14 @@ ETLSourceImpl<Derived>::forwardToRippled(
 
         BOOST_LOG_TRIVIAL(debug) << "Performing websocket handshake";
         // Perform the websocket handshake
-        ws->async_handshake(ip_, "/", yield[ec]);
-        if (ec)
-            return {};
+        ws->handshake(ip_, "/");
 
         BOOST_LOG_TRIVIAL(debug) << "Sending request";
         // Send the message
-        ws->async_write(
-            net::buffer(boost::json::serialize(request)), yield[ec]);
-        if (ec)
-            return {};
+        ws->write(net::buffer(boost::json::serialize(request)));
 
         beast::flat_buffer buffer;
-        ws->async_read(buffer, yield[ec]);
-        if (ec)
-            return {};
+        ws->read(buffer);
 
         auto begin = static_cast<char const*>(buffer.data().data());
         auto end = begin + buffer.data().size();

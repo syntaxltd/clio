@@ -132,9 +132,7 @@ public:
     }
 
     boost::json::object
-    subLedger(
-        boost::asio::yield_context& yield,
-        std::shared_ptr<WsBase>& session);
+    subLedger(std::shared_ptr<WsBase>& session);
 
     void
     pubLedger(

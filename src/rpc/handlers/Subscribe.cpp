@@ -35,7 +35,6 @@ validateStreams(boost::json::object const& request)
 
 boost::json::object
 subscribeToStreams(
-    boost::asio::yield_context& yield,
     boost::json::object const& request,
     std::shared_ptr<WsBase> session,
     SubscriptionManager& manager)
@@ -48,7 +47,7 @@ subscribeToStreams(
         std::string s = stream.as_string().c_str();
 
         if (s == "ledger")
-            response = manager.subLedger(yield, session);
+            response = manager.subLedger(session);
         else if (s == "transactions")
             manager.subTransactions(session);
         else if (s == "transactions_proposed")
@@ -208,7 +207,6 @@ unsubscribeToAccountsProposed(
 
 std::variant<Status, std::pair<std::vector<ripple::Book>, boost::json::array>>
 validateAndGetBooks(
-    boost::asio::yield_context& yield,
     boost::json::object const& request,
     std::shared_ptr<Backend::BackendInterface const> const& backend)
 {
@@ -247,29 +245,23 @@ validateAndGetBooks(
                         takerID = std::get<ripple::AccountID>(parsed);
                     }
                 }
-                auto getOrderBook = [&snapshot, &backend, &rng, &takerID](
-                                        auto book,
-                                        boost::asio::yield_context& yield) {
-                    auto bookBase = getBookBase(book);
-                    auto [offers, retCursor, warning] =
-                        backend->fetchBookOffers(
-                            bookBase, rng->maxSequence, 200, {}, yield);
+                auto getOrderBook =
+                    [&snapshot, &backend, &rng, &takerID](auto book) {
+                        auto bookBase = getBookBase(book);
+                        auto [offers, retCursor, warning] =
+                            backend->fetchBookOffers(
+                                bookBase, rng->maxSequence, 200, {});
 
-                    auto orderBook = postProcessOrderBook(
-                        offers,
-                        book,
-                        takerID,
-                        *backend,
-                        rng->maxSequence,
-                        yield);
-                    std::copy(
-                        orderBook.begin(),
-                        orderBook.end(),
-                        std::back_inserter(snapshot));
-                };
-                getOrderBook(b, yield);
+                        auto orderBook = postProcessOrderBook(
+                            offers, book, takerID, *backend, rng->maxSequence);
+                        std::copy(
+                            orderBook.begin(),
+                            orderBook.end(),
+                            std::back_inserter(snapshot));
+                    };
+                getOrderBook(b);
                 if (both)
-                    getOrderBook(ripple::reversed(b), yield);
+                    getOrderBook(ripple::reversed(b));
             }
         }
     }
@@ -330,8 +322,7 @@ doSubscribe(Context const& context)
     boost::json::array snapshot;
     if (request.contains("books"))
     {
-        auto parsed =
-            validateAndGetBooks(context.yield, request, context.backend);
+        auto parsed = validateAndGetBooks(request, context.backend);
         if (auto status = std::get_if<Status>(&parsed))
             return *status;
         auto [bks, snap] =
@@ -344,7 +335,7 @@ doSubscribe(Context const& context)
     boost::json::object response;
     if (request.contains("streams"))
         response = subscribeToStreams(
-            context.yield, request, context.session, *context.subscriptions);
+            request, context.session, *context.subscriptions);
 
     if (request.contains("accounts"))
         subscribeToAccounts(request, context.session, *context.subscriptions);

@@ -30,15 +30,12 @@ doServerInfo(Context const& context)
         info["counters"].as_object()["rpc"] = context.counters.report();
     }
 
-    auto serverInfoRippled = context.balancer->forwardToRippled(
-        context.params, context.clientIp, context.yield);
-
+    auto serverInfoRippled =
+        context.balancer->forwardToRippled(context.params, context.clientIp);
     if (serverInfoRippled && !serverInfoRippled->contains("error"))
         response["info"].as_object()["load_factor"] = 1;
 
-    auto lgrInfo = context.backend->fetchLedgerBySequence(
-        range->maxSequence, context.yield);
-
+    auto lgrInfo = context.backend->fetchLedgerBySequence(range->maxSequence);
     assert(lgrInfo.has_value());
     auto age = std::chrono::duration_cast<std::chrono::seconds>(
                    std::chrono::system_clock::now().time_since_epoch())
@@ -49,7 +46,7 @@ doServerInfo(Context const& context)
     validatedLgr["age"] = age;
     validatedLgr["hash"] = ripple::strHex(lgrInfo->hash);
     validatedLgr["seq"] = lgrInfo->seq;
-    auto fees = context.backend->fetchFees(lgrInfo->seq, context.yield);
+    auto fees = context.backend->fetchFees(lgrInfo->seq);
     assert(fees.has_value());
     validatedLgr["base_fee_xrp"] = fees->base.decimalXRP();
     validatedLgr["reserve_base_xrp"] = fees->reserve.decimalXRP();

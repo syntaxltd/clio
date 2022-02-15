@@ -54,8 +54,7 @@ doAccountTx(Context const& context)
                 return Status{
                     Error::rpcINVALID_PARAMS, "transactionIndexNotInt"};
 
-            transactionIndex =
-                boost::json::value_to<std::uint32_t>(obj.at("seq"));
+            transactionIndex = value_to<std::uint32_t>(obj.at("seq"));
         }
 
         std::optional<std::uint32_t> ledgerIndex = {};
@@ -64,8 +63,7 @@ doAccountTx(Context const& context)
             if (!obj.at("ledger").is_int64())
                 return Status{Error::rpcINVALID_PARAMS, "ledgerIndexNotInt"};
 
-            ledgerIndex =
-                boost::json::value_to<std::uint32_t>(obj.at("ledger"));
+            ledgerIndex = value_to<std::uint32_t>(obj.at("ledger"));
         }
 
         if (!transactionIndex || !ledgerIndex)
@@ -126,8 +124,7 @@ doAccountTx(Context const& context)
         if (!request.at("ledger_index").is_int64())
             return Status{Error::rpcINVALID_PARAMS, "ledgerIndexNotNumber"};
 
-        auto ledgerIndex =
-            boost::json::value_to<std::uint32_t>(request.at("ledger_index"));
+        auto ledgerIndex = value_to<uint32_t>(request.at("ledger_index"));
         maxIndex = minIndex = ledgerIndex;
     }
 
@@ -142,8 +139,7 @@ doAccountTx(Context const& context)
             return RPC::Status{
                 RPC::Error::rpcINVALID_PARAMS, "ledgerHashMalformed"};
 
-        auto lgrInfo =
-            context.backend->fetchLedgerByHash(ledgerHash, context.yield);
+        auto lgrInfo = context.backend->fetchLedgerByHash(ledgerHash);
         maxIndex = minIndex = lgrInfo->seq;
     }
 
@@ -171,7 +167,7 @@ doAccountTx(Context const& context)
     boost::json::array txns;
     auto start = std::chrono::system_clock::now();
     auto [blobs, retCursor] = context.backend->fetchAccountTransactions(
-        *accountID, limit, forward, cursor, context.yield);
+        *accountID, limit, forward, cursor);
 
     auto end = std::chrono::system_clock::now();
     BOOST_LOG_TRIVIAL(info) << __func__ << " db fetch took "

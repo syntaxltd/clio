@@ -45,15 +45,14 @@ doNoRippleCheck(Context const& context)
         return *status;
 
     auto lgrInfo = std::get<ripple::LedgerInfo>(v);
-    std::optional<ripple::Fees> fees = includeTxs
-        ? context.backend->fetchFees(lgrInfo.seq, context.yield)
-        : std::nullopt;
+    std::optional<ripple::Fees> fees =
+        includeTxs ? context.backend->fetchFees(lgrInfo.seq) : std::nullopt;
 
     boost::json::array transactions;
 
     auto keylet = ripple::keylet::account(*accountID);
-    auto accountObj = context.backend->fetchLedgerObject(
-        keylet.key, lgrInfo.seq, context.yield);
+    auto accountObj =
+        context.backend->fetchLedgerObject(keylet.key, lgrInfo.seq);
     if (!accountObj)
         throw AccountNotFoundError(ripple::toBase58(*accountID));
 
@@ -91,7 +90,6 @@ doNoRippleCheck(Context const& context)
         *accountID,
         lgrInfo.seq,
         {},
-        context.yield,
         [roleGateway,
          includeTxs,
          &fees,

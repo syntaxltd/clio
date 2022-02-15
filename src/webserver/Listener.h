@@ -21,7 +21,6 @@ class Detector
     using std::enable_shared_from_this<
         Detector<PlainSession, SslSession>>::shared_from_this;
 
-    boost::asio::io_context& ioc_;
     boost::beast::tcp_stream stream_;
     std::optional<std::reference_wrapper<ssl::context>> ctx_;
     std::shared_ptr<BackendInterface const> backend_;
@@ -33,7 +32,6 @@ class Detector
 
 public:
     Detector(
-        boost::asio::io_context& ioc,
         tcp::socket&& socket,
         std::optional<std::reference_wrapper<ssl::context>> ctx,
         std::shared_ptr<BackendInterface const> backend,
@@ -41,8 +39,7 @@ public:
         std::shared_ptr<ETLLoadBalancer> balancer,
         DOSGuard& dosGuard,
         RPC::Counters& counters)
-        : ioc_(ioc)
-        , stream_(std::move(socket))
+        : stream_(std::move(socket))
         , ctx_(ctx)
         , backend_(backend)
         , subscriptions_(subscriptions)
@@ -79,7 +76,6 @@ public:
                 return httpFail(ec, "ssl not supported by this server");
             // Launch SSL session
             std::make_shared<SslSession>(
-                ioc_,
                 stream_.release_socket(),
                 *ctx_,
                 backend_,
@@ -94,7 +90,6 @@ public:
 
         // Launch plain session
         std::make_shared<PlainSession>(
-            ioc_,
             stream_.release_socket(),
             backend_,
             subscriptions_,
@@ -108,7 +103,6 @@ public:
 
 void
 make_websocket_session(
-    boost::asio::io_context& ioc,
     boost::beast::tcp_stream stream,
     http::request<http::string_body> req,
     boost::beast::flat_buffer buffer,
@@ -119,7 +113,6 @@ make_websocket_session(
     RPC::Counters& counters)
 {
     std::make_shared<WsUpgrader>(
-        ioc,
         std::move(stream),
         backend,
         subscriptions,
@@ -133,7 +126,6 @@ make_websocket_session(
 
 void
 make_websocket_session(
-    boost::asio::io_context& ioc,
     boost::beast::ssl_stream<boost::beast::tcp_stream> stream,
     http::request<http::string_body> req,
     boost::beast::flat_buffer buffer,
@@ -144,7 +136,6 @@ make_websocket_session(
     RPC::Counters& counters)
 {
     std::make_shared<SslWsUpgrader>(
-        ioc,
         std::move(stream),
         backend,
         subscriptions,
@@ -163,7 +154,7 @@ class Listener
     using std::enable_shared_from_this<
         Listener<PlainSession, SslSession>>::shared_from_this;
 
-    boost::asio::io_context& ioc_;
+    net::io_context& ioc_;
     std::optional<std::reference_wrapper<ssl::context>> ctx_;
     tcp::acceptor acceptor_;
     std::shared_ptr<BackendInterface const> backend_;
@@ -174,7 +165,7 @@ class Listener
 
 public:
     Listener(
-        boost::asio::io_context& ioc,
+        net::io_context& ioc,
         std::optional<std::reference_wrapper<ssl::context>> ctx,
         tcp::endpoint endpoint,
         std::shared_ptr<BackendInterface const> backend,
@@ -257,7 +248,6 @@ private:
                 : std::nullopt;
             // Create the detector session and run it
             std::make_shared<Detector<PlainSession, SslSession>>(
-                ioc_,
                 std::move(socket),
                 ctxRef,
                 backend_,

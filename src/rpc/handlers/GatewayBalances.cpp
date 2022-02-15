@@ -145,14 +145,8 @@ doGatewayBalances(Context const& context)
         }
         return true;
     };
-
     traverseOwnedNodes(
-        *context.backend,
-        *accountID,
-        lgrInfo.seq,
-        beast::zero,
-        context.yield,
-        addToResponse);
+        *context.backend, *accountID, lgrInfo.seq, beast::zero, addToResponse);
 
     if (!sums.empty())
     {

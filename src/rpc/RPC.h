@@ -2,7 +2,6 @@
 #define REPORTING_RPC_H_INCLUDED
 
 #include <ripple/protocol/ErrorCodes.h>
-#include <boost/asio/spawn.hpp>
 #include <boost/json.hpp>
 #include <backend/BackendInterface.h>
 #include <optional>
@@ -28,7 +27,6 @@ namespace RPC {
 
 struct Context
 {
-    boost::asio::yield_context& yield;
     std::string method;
     std::uint32_t version;
     boost::json::object const& params;
@@ -44,7 +42,6 @@ struct Context
     std::string clientIp;
 
     Context(
-        boost::asio::yield_context& yield_,
         std::string const& command_,
         std::uint32_t version_,
         boost::json::object const& params_,
@@ -55,8 +52,7 @@ struct Context
         Backend::LedgerRange const& range_,
         Counters& counters_,
         std::string const& clientIp_)
-        : yield(yield_)
-        , method(command_)
+        : method(command_)
         , version(version_)
         , params(params_)
         , backend(backend_)
@@ -139,7 +135,6 @@ make_error(Error err);
 
 std::optional<Context>
 make_WsContext(
-    boost::asio::yield_context& yc,
     boost::json::object const& request,
     std::shared_ptr<BackendInterface const> const& backend,
     std::shared_ptr<SubscriptionManager> const& subscriptions,
@@ -151,7 +146,6 @@ make_WsContext(
 
 std::optional<Context>
 make_HttpContext(
-    boost::asio::yield_context& yc,
     boost::json::object const& request,
     std::shared_ptr<BackendInterface const> const& backend,
     std::shared_ptr<SubscriptionManager> const& subscriptions,

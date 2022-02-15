@@ -128,12 +128,7 @@ doAccountOffers(Context const& context)
     };
 
     auto nextCursor = traverseOwnedNodes(
-        *context.backend,
-        *accountID,
-        lgrInfo.seq,
-        cursor,
-        context.yield,
-        addToResponse);
+        *context.backend, *accountID, lgrInfo.seq, cursor, addToResponse);
 
     if (nextCursor)
         response["marker"] = ripple::strHex(*nextCursor);

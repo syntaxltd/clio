@@ -4,9 +4,6 @@
 #include <ripple/basics/StringUtilities.h>
 #include <ripple/basics/chrono.h>
 #include <ripple/ledger/ReadView.h>
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/spawn.hpp>
 #include <boost/icl/closed_interval.hpp>
 #include <boost/json.hpp>
 #include <boost/lexical_cast.hpp>
@@ -27,9 +24,6 @@
 // These postgres structs must be freed only by the postgres API.
 using pg_result_type = std::unique_ptr<PGresult, void (*)(PGresult*)>;
 using pg_connection_type = std::unique_ptr<PGconn, void (*)(PGconn*)>;
-using asio_socket_type = std::unique_ptr<
-    boost::asio::ip::tcp::socket,
-    void (*)(boost::asio::ip::tcp::socket*)>;
 
 /** first: command
  * second: parameter values
@@ -52,7 +46,7 @@ using pg_formatted_params = std::vector<char const*>;
 struct PgConfig
 {
     /** Maximum connections allowed to db. */
-    std::size_t max_connections{1000};
+    std::size_t max_connections{std::numeric_limits<std::size_t>::max()};
     /** Close idle connections past this duration. */
     std::chrono::seconds timeout{600};
 
@@ -261,23 +255,11 @@ class Pg
     friend class PgQuery;
 
     PgConfig const& config_;
-    boost::asio::io_context::strand strand_;
     bool& stop_;
     std::mutex& mutex_;
 
-    asio_socket_type socket_{nullptr, [](boost::asio::ip::tcp::socket*) {}};
-
     // The connection object must be freed using the libpq API PQfinish() call.
     pg_connection_type conn_{nullptr, [](PGconn* conn) { PQfinish(conn); }};
-
-    inline asio_socket_type
-    getSocket(boost::asio::yield_context& strand);
-
-    inline PgResult
-    waitForStatus(boost::asio::yield_context& yield, ExecStatusType expected);
-
-    inline void
-    flush(boost::asio::yield_context& yield);
 
     /** Clear results from the connection.
      *
@@ -298,14 +280,13 @@ class Pg
      * or in an errored state, reconnects to the database.
      */
     void
-    connect(boost::asio::yield_context& yield);
+    connect();
 
     /** Disconnect from postgres. */
     void
     disconnect()
     {
         conn_.reset();
-        socket_.reset();
     }
 
     /** Execute postgres query.
@@ -321,11 +302,7 @@ class Pg
      * @return Query result object.
      */
     PgResult
-    query(
-        char const* command,
-        std::size_t const nParams,
-        char const* const* values,
-        boost::asio::yield_context& yield);
+    query(char const* command, std::size_t nParams, char const* const* values);
 
     /** Execute postgres query with no parameters.
      *
@@ -333,9 +310,9 @@ class Pg
      * @return Query result object;
      */
     PgResult
-    query(char const* command, boost::asio::yield_context& yield)
+    query(char const* command)
     {
-        return query(command, 0, nullptr, yield);
+        return query(command, 0, nullptr);
     }
 
     /** Execute postgres query with parameters.
@@ -344,7 +321,7 @@ class Pg
      * @return Query result object.
      */
     PgResult
-    query(pg_params const& dbParams, boost::asio::yield_context& yield);
+    query(pg_params const& dbParams);
 
     /** Insert multiple records into a table using Postgres' bulk COPY.
      *
@@ -354,10 +331,7 @@ class Pg
      * @param records Records in the COPY IN format.
      */
     void
-    bulkInsert(
-        char const* table,
-        std::string const& records,
-        boost::asio::yield_context& yield);
+    bulkInsert(char const* table, std::string const& records);
 
 public:
     /** Constructor for Pg class.
@@ -367,11 +341,8 @@ public:
      * @param stop Reference to connection pool's stop flag.
      * @param mutex Reference to connection pool's mutex.
      */
-    Pg(PgConfig const& config,
-       boost::asio::io_context& ctx,
-       bool& stop,
-       std::mutex& mutex)
-        : config_(config), strand_(ctx), stop_(stop), mutex_(mutex)
+    Pg(PgConfig const& config, bool& stop, std::mutex& mutex)
+        : config_(config), stop_(stop), mutex_(mutex)
     {
     }
 };
@@ -397,7 +368,6 @@ class PgPool
 
     using clock_type = std::chrono::steady_clock;
 
-    boost::asio::io_context& ioc_;
     PgConfig config_;
     std::mutex mutex_;
     std::condition_variable cond_;
@@ -436,17 +406,11 @@ public:
      * @param j Logger object.
      * @param parent Stoppable parent.
      */
-    PgPool(boost::asio::io_context& ioc, boost::json::object const& config);
+    PgPool(boost::json::object const& config);
 
     ~PgPool()
     {
         onStop();
-    }
-
-    PgConfig&
-    config()
-    {
-        return config_;
     }
 
     /** Initiate idle connection timer.
@@ -460,6 +424,10 @@ public:
     /** Prepare for process shutdown. (Stoppable) */
     void
     onStop();
+
+    /** Disconnect idle postgres connections. */
+    void
+    idleSweeper();
 };
 
 //-----------------------------------------------------------------------------
@@ -499,11 +467,11 @@ public:
      * @return Result of query, including errors.
      */
     PgResult
-    operator()(pg_params const& dbParams, boost::asio::yield_context& yield)
+    operator()(pg_params const& dbParams)
     {
         if (!pg_)  // It means we're stopping. Return empty result.
             return PgResult();
-        return pg_->query(dbParams, yield);
+        return pg_->query(dbParams);
     }
 
     /** Execute postgres query with only command statement.
@@ -512,9 +480,9 @@ public:
      * @return Result of query, including errors.
      */
     PgResult
-    operator()(char const* command, boost::asio::yield_context& yield)
+    operator()(char const* command)
     {
-        return operator()(pg_params{command, {}}, yield);
+        return operator()(pg_params{command, {}});
     }
 
     /** Insert multiple records into a table using Postgres' bulk COPY.
@@ -525,12 +493,9 @@ public:
      * @param records Records in the COPY IN format.
      */
     void
-    bulkInsert(
-        char const* table,
-        std::string const& records,
-        boost::asio::yield_context& yield)
+    bulkInsert(char const* table, std::string const& records)
     {
-        pg_->bulkInsert(table, records, yield);
+        pg_->bulkInsert(table, records);
     }
 };
 
@@ -544,7 +509,7 @@ public:
  * @return Postgres connection pool manager
  */
 std::shared_ptr<PgPool>
-make_PgPool(boost::asio::io_context& ioc, boost::json::object const& pgConfig);
+make_PgPool(boost::json::object const& pgConfig);
 
 /** Initialize the Postgres schema.
  *
@@ -564,8 +529,7 @@ initAccountTx(std::shared_ptr<PgPool> const& pool);
 // @return vector of LedgerInfos
 std::optional<ripple::LedgerInfo>
 getLedger(
-    std::variant<std::monostate, ripple::uint256, std::uint32_t> const&
-        whichLedger,
+    std::variant<std::monostate, ripple::uint256, uint32_t> const& whichLedger,
     std::shared_ptr<PgPool>& pgPool);
 
 #endif  // RIPPLE_CORE_PG_H_INCLUDED
