@@ -60,6 +60,7 @@ synchronous(F&& f)
 class BackendInterface
 {
 protected:
+    mutable std::shared_mutex rngMtx_;
     std::optional<LedgerRange> range;
     SimpleCache cache_;
 
@@ -110,8 +111,19 @@ public:
     std::optional<LedgerRange>
     fetchLedgerRange() const
     {
-        std::lock_guard lk(mutex_);
+        std::shared_lock lck(rngMtx_);
         return range;
+    }
+
+    void
+    updateRange(uint32_t newMax)
+    {
+        std::unique_lock lck(rngMtx_);
+        assert(!range || newMax >= range->maxSequence);
+        if (!range)
+            range = {newMax, newMax};
+        else
+            range->maxSequence = newMax;
     }
 
     std::optional<ripple::Fees>
@@ -234,16 +246,6 @@ public:
     // Doesn't throw DatabaseTimeout. Should be used with care.
     std::optional<LedgerRange>
     hardFetchLedgerRangeNoThrow(boost::asio::yield_context& yield) const;
-
-    void
-    updateRange(std::uint32_t const newMax)
-    {
-        std::lock_guard lk(mutex_);
-        if (!range)
-            range = {newMax, newMax};
-        else
-            range->maxSequence = newMax;
-    }
 
     virtual void
     writeLedger(
