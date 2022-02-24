@@ -784,7 +784,7 @@ ReportingETL::monitor()
     auto fetchLatest = [&]() {
         Backend::synchronous([&](boost::asio::yield_context yield) {
             latestSequence = backend_->fetchLatestLedgerSequence(yield);
-        })
+        });
     };
     Backend::retryOnTimeout(fetchLatest);
     if (!latestSequence)
@@ -916,8 +916,11 @@ void
 ReportingETL::monitorReadOnly()
 {
     BOOST_LOG_TRIVIAL(debug) << "Starting reporting in strict read only mode";
-    std::optional<uint32_t> latestSequence = Backend::retryOnTimeout(
-        [&]() { return backend_->fetchLatestLedgerSequence(); });
+    std::optional<uint32_t> latestSequence = Backend::retryOnTimeout([&]() {
+        return Backend::synchronous([&](boost::asio::yield_context yield) {
+            return backend_->fetchLatestLedgerSequence(yield);
+        });
+    });
     if (!latestSequence)
         latestSequence = networkValidatedLedgers_->getMostRecent();
     if (!latestSequence)
@@ -931,7 +934,13 @@ ReportingETL::monitorReadOnly()
     while (true)
     {
         // try to grab the next ledger
-        if (backend_->fetchLedgerBySequence(*latestSequence))
+        if (Backend::retryOnTimeout([&]() {
+                return Backend::synchronous(
+                    [&](boost::asio::yield_context yield) {
+                        return backend_->fetchLedgerBySequence(
+                            *latestSequence, yield);
+                    });
+            }))
         {
             publishLedger(*latestSequence, {});
             latestSequence = *latestSequence + 1;
