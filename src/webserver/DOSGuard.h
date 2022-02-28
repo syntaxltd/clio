@@ -29,7 +29,7 @@ class DOSGuard
         std::string const& key,
         std::uint32_t const fallback) const
     {
-        if (auto const c = getConfig(config); c)
+        if (auto const c = getConfig(config); c && c->contains("key"))
             return c->at(key).as_int64();
 
         return fallback;
@@ -42,10 +42,10 @@ class DOSGuard
 
         auto const& c = getConfig(config);
         if (!c)
-            return T();
+            return {};
 
         if (!c->contains("whitelist"))
-            return T();
+            return {};
 
         auto const& w = c->at("whitelist").as_array();
 
