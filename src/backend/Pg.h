@@ -348,12 +348,12 @@ class Pg
 
     /** Insert multiple records into a table using Postgres' bulk COPY.
      *
-     * Throws upon error.
+     * returns false upon error
      *
      * @param table Name of table for import.
      * @param records Records in the COPY IN format.
      */
-    void
+    bool
     bulkInsert(
         char const* table,
         std::string const& records,
@@ -524,13 +524,13 @@ public:
      * @param table Name of table for import.
      * @param records Records in the COPY IN format.
      */
-    void
+    bool
     bulkInsert(
         char const* table,
         std::string const& records,
         boost::asio::yield_context& yield)
     {
-        pg_->bulkInsert(table, records, yield);
+        return pg_->bulkInsert(table, records, yield);
     }
 };
 

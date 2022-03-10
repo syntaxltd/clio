@@ -97,7 +97,8 @@ PostgresBackend::doWriteLedgerObject(
             BOOST_LOG_TRIVIAL(info)
                 << __func__ << " Flushing large buffer. num objects = "
                 << numRowsInObjectsBuffer_;
-            writeConnection_.bulkInsert("objects", objectsBuffer_.str(), yield);
+            abortWrite_ = !writeConnection_.bulkInsert(
+                "objects", objectsBuffer_.str(), yield);
             BOOST_LOG_TRIVIAL(info) << __func__ << " Flushed large buffer";
             objectsBuffer_.str("");
         }
@@ -128,7 +129,7 @@ PostgresBackend::writeSuccessor(
             BOOST_LOG_TRIVIAL(info)
                 << __func__ << " Flushing large buffer. num successors = "
                 << numRowsInSuccessorBuffer_;
-            writeConnection_.bulkInsert(
+            abortWrite_ = !writeConnection_.bulkInsert(
                 "successor", successorBuffer_.str(), yield);
             BOOST_LOG_TRIVIAL(info) << __func__ << " Flushed large buffer";
             successorBuffer_.str("");
@@ -737,9 +738,10 @@ PostgresBackend::startWrites() const
         auto res = writeConnection_("BEGIN", yield);
         if (!res || res.status() != PGRES_COMMAND_OK)
         {
-            std::stringstream msg;
-            msg << "Postgres error creating transaction: " << res.msg();
-            throw std::runtime_error(msg.str());
+            BOOST_LOG_TRIVIAL(error)
+                << __func__
+                << "Postgres error creating transaction: " << res.msg();
+            abortWrite_ = true;
         }
     });
 }
@@ -751,18 +753,21 @@ PostgresBackend::doFinishWrites()
         if (!abortWrite_)
         {
             std::string txStr = transactionsBuffer_.str();
-            writeConnection_.bulkInsert("transactions", txStr, yield);
-            writeConnection_.bulkInsert(
+            abortWrite_ =
+                !writeConnection_.bulkInsert("transactions", txStr, yield);
+            abortWrite_ = !writeConnection_.bulkInsert(
                 "account_transactions", accountTxBuffer_.str(), yield);
             std::string objectsStr = objectsBuffer_.str();
             if (objectsStr.size())
-                writeConnection_.bulkInsert("objects", objectsStr, yield);
+                abortWrite_ =
+                    !writeConnection_.bulkInsert("objects", objectsStr, yield);
             BOOST_LOG_TRIVIAL(debug)
                 << __func__ << " objects size = " << objectsStr.size()
                 << " txns size = " << txStr.size();
             std::string successorStr = successorBuffer_.str();
             if (successorStr.size())
-                writeConnection_.bulkInsert("successor", successorStr, yield);
+                abortWrite_ = !writeConnection_.bulkInsert(
+                    "successor", successorStr, yield);
             if (!range)
             {
                 std::stringstream indexCreate;
@@ -771,15 +776,17 @@ PostgresBackend::doFinishWrites()
                        "WHERE NOT "
                        "ledger_seq = "
                     << std::to_string(inProcessLedger);
-                writeConnection_(indexCreate.str().data(), yield);
+                abortWrite_ =
+                    !writeConnection_(indexCreate.str().data(), yield);
             }
         }
         auto res = writeConnection_("COMMIT", yield);
         if (!res || res.status() != PGRES_COMMAND_OK)
         {
-            std::stringstream msg;
-            msg << "Postgres error committing transaction: " << res.msg();
-            throw std::runtime_error(msg.str());
+            BOOST_LOG_TRIVIAL(error)
+                << __func__
+                << "Postgres error committing transaction: " << res.msg();
+            abortWrite_ = true;
         }
         transactionsBuffer_.str("");
         transactionsBuffer_.clear();

@@ -438,7 +438,7 @@ Pg::query(pg_params const& dbParams, boost::asio::yield_context& yield)
         yield);
 }
 
-void
+bool
 Pg::bulkInsert(
     char const* table,
     std::string const& records,
@@ -549,6 +549,8 @@ Pg::bulkInsert(
             BOOST_LOG_TRIVIAL(error) << __func__ << " " << records;
             throw std::runtime_error(ss.str());
         }
+        // if we get here, everything was successful
+        return true;
     }
     catch (std::exception const& e)
     {
@@ -557,9 +559,7 @@ Pg::bulkInsert(
                                  << "error = " << e.what();
         // Sever connection upon any error.
         disconnect();
-        std::stringstream ss;
-        ss << "query error: " << e.what();
-        throw std::runtime_error(ss.str());
+        return false;
     }
 }
 
