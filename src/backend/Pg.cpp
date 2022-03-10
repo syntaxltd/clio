@@ -355,13 +355,11 @@ Pg::query(
                                  << "error = " << e.what();
         // Sever connection upon any error.
         disconnect();
-        std::stringstream ss;
-        ss << "query error: " << e.what();
-        throw std::runtime_error(ss.str());
+        return {};
     }
 
     if (!ret)
-        throw std::runtime_error("no result structure returned");
+        return {};
 
     // Ensure proper query execution.
     switch (PQresultStatus(ret.get()))
@@ -1120,66 +1118,6 @@ END;
 $$ LANGUAGE plpgsql;
 
 
--- Trigger prior to insert on ledgers table. Validates length of hash fields.
--- Verifies ancestry based on ledger_hash & prev_hash as follows:
--- 1) If ledgers is empty, allows insert.
--- 2) For each new row, check for previous and later ledgers by a single
---    sequence. For each that exist, confirm ancestry based on hashes.
--- 3) Disallow inserts with no prior or next ledger by sequence if any
---    ledgers currently exist. This disallows gaps to be introduced by
---    way of inserting.
-CREATE OR REPLACE FUNCTION insert_ancestry() RETURNS TRIGGER AS $$
-DECLARE
-    _parent bytea;
-    _child  bytea;
-    _partition text;
-    _lowerBound bigint;
-    _upperBound bigint;
-    _interval bigint;
-BEGIN
-    IF length(NEW.ledger_hash) != 32 OR length(NEW.prev_hash) != 32 THEN
-        RAISE 'ledger_hash and prev_hash must each be 32 bytes: %', NEW;
-    END IF;
-    
-    _interval = 1000000;
-    _lowerBound = (NEW.ledger_seq / _interval);
-    _partition= _lowerBound;
-    _lowerBound = _lowerBound * _interval;
-    _upperBound = _lowerBound + _interval;
-
-
-    EXECUTE format('create table if not exists public.objects_part_%s partition of public.objects for values from (%s) to (%s)',_partition,_lowerBound,_upperBound);
-    EXECUTE format('create table if not exists public.successor_part_%s partition of public.successor for values from (%s) to (%s)',_partition,_lowerBound,_upperBound);
-    EXECUTE format('create table if not exists public.transactions_part_%s partition of public.transactions for values from (%s) to (%s)',_partition,_lowerBound,_upperBound);
-    EXECUTE format('create table if not exists public.account_transactions_part_%s partition of public.account_transactions for values from (%s) to (%s)',_partition,_lowerBound,_upperBound);
-
-    IF (SELECT ledger_hash
-          FROM public.ledgers
-         ORDER BY ledger_seq DESC
-         LIMIT 1) = NEW.prev_hash THEN RETURN NEW; END IF;
-
-    IF NOT EXISTS (SELECT 1 FROM public.ledgers) THEN RETURN NEW; END IF;
-
-    _parent := (SELECT ledger_hash
-                  FROM public.ledgers
-                 WHERE ledger_seq = NEW.ledger_seq - 1);
-    _child  := (SELECT prev_hash
-                  FROM public.ledgers
-                 WHERE ledger_seq = NEW.ledger_seq + 1);
-    IF _parent IS NULL AND _child IS NULL THEN
-        RAISE 'Ledger Ancestry error: orphan.';
-    END IF;
-    IF _parent != NEW.prev_hash THEN
-        RAISE 'Ledger Ancestry error: bad parent.';
-    END IF;
-    IF _child != NEW.ledger_hash THEN
-        RAISE 'Ledger Ancestry error: bad child.';
-    END IF;
-
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
 CREATE TRIGGER verify_ancestry BEFORE INSERT OR UPDATE on ledgers
     FOR EACH ROW EXECUTE PROCEDURE insert_ancestry();
 
@@ -1517,6 +1455,70 @@ END;
 $$ LANGUAGE plpgsql;
 
 )";
+
+static constexpr char const* insertAncestrySchema = R"(
+
+-- Trigger prior to insert on ledgers table. Validates length of hash fields.
+-- Verifies ancestry based on ledger_hash & prev_hash as follows:
+-- 1) If ledgers is empty, allows insert.
+-- 2) For each new row, check for previous and later ledgers by a single
+--    sequence. For each that exist, confirm ancestry based on hashes.
+-- 3) Disallow inserts with no prior or next ledger by sequence if any
+--    ledgers currently exist. This disallows gaps to be introduced by
+--    way of inserting.
+CREATE OR REPLACE FUNCTION insert_ancestry() RETURNS TRIGGER AS $$
+DECLARE
+    _parent bytea;
+    _child  bytea;
+    _partition text;
+    _lowerBound bigint;
+    _upperBound bigint;
+    _interval bigint;
+BEGIN
+    IF length(NEW.ledger_hash) != 32 OR length(NEW.prev_hash) != 32 THEN
+        RAISE 'ledger_hash and prev_hash must each be 32 bytes: %%', NEW;
+    END IF;
+    
+    _interval = %u;
+    _lowerBound = (NEW.ledger_seq / _interval);
+    _partition= _lowerBound;
+    _lowerBound = _lowerBound * _interval;
+    _upperBound = _lowerBound + _interval;
+
+
+    EXECUTE format('create table if not exists public.objects_part_%%s partition of public.objects for values from (%%s) to (%%s)',_partition,_lowerBound,_upperBound);
+    EXECUTE format('create table if not exists public.successor_part_%%s partition of public.successor for values from (%%s) to (%%s)',_partition,_lowerBound,_upperBound);
+    EXECUTE format('create table if not exists public.transactions_part_%%s partition of public.transactions for values from (%%s) to (%%s)',_partition,_lowerBound,_upperBound);
+    EXECUTE format('create table if not exists public.account_transactions_part_%%s partition of public.account_transactions for values from (%%s) to (%%s)',_partition,_lowerBound,_upperBound);
+
+    IF (SELECT ledger_hash
+          FROM public.ledgers
+         ORDER BY ledger_seq DESC
+         LIMIT 1) = NEW.prev_hash THEN RETURN NEW; END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM public.ledgers) THEN RETURN NEW; END IF;
+
+    _parent := (SELECT ledger_hash
+                  FROM public.ledgers
+                 WHERE ledger_seq = NEW.ledger_seq - 1);
+    _child  := (SELECT prev_hash
+                  FROM public.ledgers
+                 WHERE ledger_seq = NEW.ledger_seq + 1);
+    IF _parent IS NULL AND _child IS NULL THEN
+        RAISE 'Ledger Ancestry error: orphan.';
+    END IF;
+    IF _parent != NEW.prev_hash THEN
+        RAISE 'Ledger Ancestry error: bad parent.';
+    END IF;
+    IF _child != NEW.ledger_hash THEN
+        RAISE 'Ledger Ancestry error: bad child.';
+    END IF;
+
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+)";
 std::array<char const*, LATEST_SCHEMA_VERSION> upgrade_schemata = {
     // upgrade from version 0:
     "There is no upgrade path from version 0. Instead, install "
@@ -1595,6 +1597,27 @@ initAccountTx(std::shared_ptr<PgPool> const& pool)
     PgResult res;
     Backend::synchronous([&](boost::asio::yield_context yield) {
         res = PgQuery(pool)(accountTxSchema, yield);
+    });
+
+    if (!res)
+    {
+        std::stringstream ss;
+        ss << "Error initializing account_tx stored procedure";
+        throw std::runtime_error(ss.str());
+    }
+}
+void
+initInsertAncestry(
+    std::shared_ptr<PgPool> const& pool,
+    uint32_t partitionInterval)
+{
+    PgResult res;
+    Backend::synchronous([&](boost::asio::yield_context yield) {
+        res = PgQuery(pool)(
+            (boost::format(insertAncestrySchema) % partitionInterval)
+                .str()
+                .c_str(),
+            yield);
     });
 
     if (!res)

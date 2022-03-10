@@ -28,7 +28,7 @@ retryOnTimeout(F func, size_t waitMs = 500)
         {
             return func();
         }
-        catch (DatabaseTimeout& t)
+        catch (DatabaseTimeout const& t)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(waitMs));
             BOOST_LOG_TRIVIAL(error)
@@ -47,28 +47,48 @@ synchronous(F&& f)
 
     work.emplace(ctx);
 
+    std::atomic_bool errored = false;
     using R = typename std::result_of<F(boost::asio::yield_context&)>::type;
     if constexpr (!std::is_same<R, void>::value)
     {
         R res;
         boost::asio::spawn(
-            strand, [&f, &work, &res](boost::asio::yield_context yield) {
-                res = f(yield);
+            strand,
+            [&f, &work, &res, &errored](boost::asio::yield_context yield) {
+                try
+                {
+                    res = f(yield);
+                }
+                catch (DatabaseTimeout const&)
+                {
+                    errored = true;
+                }
                 work.reset();
             });
 
         ctx.run();
+        if (errored)
+            throw DatabaseTimeout();
         return res;
     }
     else
     {
         boost::asio::spawn(
-            strand, [&f, &work](boost::asio::yield_context yield) {
-                f(yield);
+            strand, [&f, &work, &errored](boost::asio::yield_context yield) {
+                try
+                {
+                    f(yield);
+                }
+                catch (DatabaseTimeout const&)
+                {
+                    errored = true;
+                }
                 work.reset();
             });
 
         ctx.run();
+        if (errored)
+            throw DatabaseTimeout();
     }
 }
 

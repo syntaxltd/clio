@@ -557,6 +557,10 @@ void
 initSchema(std::shared_ptr<PgPool> const& pool);
 void
 initAccountTx(std::shared_ptr<PgPool> const& pool);
+void
+initInsertAncestry(
+    std::shared_ptr<PgPool> const& pool,
+    uint32_t partitionInterval);
 
 // Load the ledger info for the specified ledger/s from the database
 // @param whichLedger specifies the ledger to load via ledger sequence, ledger

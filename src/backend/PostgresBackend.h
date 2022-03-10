@@ -20,6 +20,7 @@ private:
     std::uint32_t inProcessLedger = 0;
     mutable std::unordered_set<std::string> successors_;
 
+    boost::json::object config_;
     const char* const set_timeout = "SET statement_timeout TO 10000";
 
 public:

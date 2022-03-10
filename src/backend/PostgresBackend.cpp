@@ -25,6 +25,7 @@ PostgresBackend::PostgresBackend(
     : BackendInterface(config)
     , pgPool_(make_PgPool(ioc, config))
     , writeConnection_(pgPool_)
+    , config_(config)
 {
     if (config.contains("write_interval"))
     {
@@ -284,6 +285,7 @@ std::optional<LedgerRange>
 PostgresBackend::hardFetchLedgerRange(boost::asio::yield_context& yield) const
 {
     auto range = PgQuery(pgPool_)("SELECT complete_ledgers()", yield);
+    checkResult(range, 1);
     if (!range)
         return {};
 
@@ -475,6 +477,7 @@ PostgresBackend::fetchTransactions(
             [this, &hash, &results, hw, &numRemaining, &errored, i](
                 boost::asio::yield_context yield) {
                 BOOST_LOG_TRIVIAL(trace) << __func__ << " getting txn = " << i;
+                std::cout << "spawn thread txns" << std::endl;
 
                 PgQuery pgQuery(pgPool_);
 
@@ -562,6 +565,7 @@ PostgresBackend::doFetchLedgerObjects(
             [this, &key, &results, &numRemaining, &errored, hw, i, sequence](
                 boost::asio::yield_context yield) {
                 PgQuery pgQuery(pgPool_);
+                std::cout << "spawn thread objects" << std::endl;
 
                 std::stringstream sql;
                 sql << "SELECT object FROM "
@@ -722,6 +726,11 @@ PostgresBackend::open(bool readOnly)
 {
     initSchema(pgPool_);
     initAccountTx(pgPool_);
+    uint32_t partitionInterval = 1000000;  // every 1 million ledgers
+    if (config_.contains("partition_interval"))
+        partitionInterval = config_.at("partitionInterval").as_int64();
+
+    initInsertAncestry(pgPool_, partitionInterval);
 }
 
 void

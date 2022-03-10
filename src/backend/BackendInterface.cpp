@@ -34,7 +34,7 @@ BackendInterface::hardFetchLedgerRangeNoThrow(
         {
             return hardFetchLedgerRange(yield);
         }
-        catch (DatabaseTimeout& t)
+        catch (DatabaseTimeout const& t)
         {
             ;
         }
