@@ -24,6 +24,7 @@ processAsyncWriteResponse(T& requestParams, CassFuture* fut, F func)
         BOOST_LOG_TRIVIAL(error)
             << "ERROR!!! Cassandra write error: " << rc << ", "
             << cass_error_desc(rc) << " id= " << requestParams.toString()
+            << ", current retries " << requestParams.currentRetries
             << ", retrying in " << wait.count() << " milliseconds";
         ++requestParams.currentRetries;
         std::shared_ptr<boost::asio::steady_timer> timer =
@@ -212,16 +213,33 @@ CassandraBackend::writeSuccessor(
         << " seq = " << std::to_string(seq) << " successor = " << successor;
     assert(key.size() != 0);
     assert(successor.size() != 0);
+    if (cleanUp_)
+    {
+        BOOST_LOG_TRIVIAL(debug)
+            << "Cleaning up successor. key = " << ripple::strHex(key)
+            << " seq = " << seq;
+        makeAndExecuteAsyncWrite(
+            this,
+            std::move(std::make_tuple(std::string{key}, seq)),
+            [this](auto& params) {
+                auto& [key, seq] = params.data;
+                CassandraStatement stmt{cleanUpSuccessor_};
+                stmt.bindNextBytes(key);
+                stmt.bindNextInt(seq);
+                return stmt;
+            },
+            "cleanUpSuccessor");
+    }
     makeAndExecuteAsyncWrite(
         this,
         std::move(std::make_tuple(std::move(key), seq, std::move(successor))),
         [this](auto& params) {
-            auto& [key, sequence, successor] = params.data;
+            auto& [key, seq, succ] = params.data;
 
             CassandraStatement statement{insertSuccessor_};
             statement.bindNextBytes(key);
-            statement.bindNextInt(sequence);
-            statement.bindNextBytes(successor);
+            statement.bindNextInt(seq);
+            statement.bindNextBytes(succ);
             return statement;
         },
         "successor");
@@ -601,6 +619,23 @@ CassandraBackend::doFetchSuccessorKey(
         BOOST_LOG_TRIVIAL(debug) << __func__ << " - no rows";
         return {};
     }
+    if (cleanUp_)
+    {
+        BOOST_LOG_TRIVIAL(debug)
+            << "Cleaning up successor. key = " << ripple::strHex(key)
+            << " seq = " << ledgerSequence;
+        makeAndExecuteAsyncWrite(
+            this,
+            std::move(std::make_tuple(uint256ToString(key), ledgerSequence)),
+            [this](auto& params) {
+                auto& [key, seq] = params.data;
+                CassandraStatement stmt{cleanUpSuccessor_};
+                stmt.bindNextBytes(key);
+                stmt.bindNextInt(seq);
+                return stmt;
+            },
+            "cleanUpSuccessor");
+    }
     auto next = result.getUInt256();
     if (next == lastKey)
         return {};
@@ -808,6 +843,11 @@ CassandraBackend::open(bool readOnly)
             return config_[field].as_int64();
         return {};
     };
+    auto getBool = [this](std::string const& field) -> std::optional<bool> {
+        if (config_.contains(field) && config_.at(field).is_bool())
+            return config_[field].as_bool();
+        return {};
+    };
     if (open_)
     {
         assert(false);
@@ -986,6 +1026,8 @@ CassandraBackend::open(bool readOnly)
     int ttl = getInt("ttl") ? *getInt("ttl") * 2 : 0;
     BOOST_LOG_TRIVIAL(info)
         << __func__ << " setting ttl to " << std::to_string(ttl);
+
+    cleanUp_ = getBool("clean_up") ? *getBool("clean_up") : false;
 
     auto executeSimpleStatement = [this](std::string const& query) {
         CassStatement* statement = makeStatement(query.c_str(), 0);
@@ -1209,6 +1251,12 @@ CassandraBackend::open(bool readOnly)
         query << "INSERT INTO " << tablePrefix << "successor"
               << " (key,seq,next) VALUES (?, ?, ?)";
         if (!insertSuccessor_.prepareStatement(query, session_.get()))
+            continue;
+
+        query.str("");
+        query << "DELETE FROM " << tablePrefix << "successor"
+              << " WHERE key = ? AND seq > ?";
+        if (!cleanUpSuccessor_.prepareStatement(query, session_.get()))
             continue;
 
         query.str("");

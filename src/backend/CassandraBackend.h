@@ -594,6 +594,7 @@ private:
     CassandraPreparedStatement getToken_;
     CassandraPreparedStatement insertSuccessor_;
     CassandraPreparedStatement selectSuccessor_;
+    CassandraPreparedStatement cleanUpSuccessor_;
     CassandraPreparedStatement insertDiff_;
     CassandraPreparedStatement selectDiff_;
     CassandraPreparedStatement insertAccountTx_;
@@ -611,6 +612,11 @@ private:
 
     uint32_t syncInterval_ = 1;
     uint32_t lastSync_ = 0;
+    // whether to clean up data due to rolling back. We only reset the
+    // ledger_range table, which determines where ETL starts. We delete the
+    // previously written data lazily, by issuing deletes for future records for
+    // each object in the diff.
+    bool cleanUp_;
 
     // maximum number of concurrent in flight requests. New requests will wait
     // for earlier requests to finish if this limit is exceeded
