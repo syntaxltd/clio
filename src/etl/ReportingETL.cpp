@@ -1,4 +1,5 @@
 #include <ripple/basics/StringUtilities.h>
+#include <backend/CassandraBackend.h>
 #include <backend/DBHelpers.h>
 #include <etl/ReportingETL.h>
 
@@ -949,6 +950,12 @@ ReportingETL::loadCacheAsync(uint32_t seq)
                             return backend_->fetchLedgerPage(
                                 cursor, seq, 256, yield);
                         });
+                    for (auto& obj : res.objects)
+                    {
+                        dynamic_pointer_cast<Backend::CassandraBackend>(
+                            backend_)
+                            ->cleanUpSuccessor(obj.key, seq);
+                    }
                     backend_->cache().update(res.objects, seq, true);
                     if (!res.cursor || (end && *(res.cursor) > *end))
                         break;
@@ -960,6 +967,9 @@ ReportingETL::loadCacheAsync(uint32_t seq)
                 }
                 if (--(*numRemaining) == 0)
                 {
+                    std::dynamic_pointer_cast<Backend::CassandraBackend>(
+                        backend_)
+                        ->sync();
                     BOOST_LOG_TRIVIAL(info)
                         << "Finished loading cache. cache size = "
                         << backend_->cache().size();

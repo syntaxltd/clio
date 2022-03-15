@@ -903,6 +903,9 @@ public:
         std::string&& successor) override;
 
     void
+    cleanUpSuccessor(ripple::uint256 const& key, std::uint32_t seq);
+
+    void
     writeAccountTransactions(
         std::vector<AccountTransactionsData>&& data) override;
 

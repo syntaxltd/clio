@@ -213,23 +213,20 @@ CassandraBackend::writeSuccessor(
         << " seq = " << std::to_string(seq) << " successor = " << successor;
     assert(key.size() != 0);
     assert(successor.size() != 0);
-    if (cleanUp_)
-    {
-        BOOST_LOG_TRIVIAL(debug)
-            << "Cleaning up successor. key = " << ripple::strHex(key)
-            << " seq = " << seq;
-        makeAndExecuteAsyncWrite(
-            this,
-            std::move(std::make_tuple(std::string{key}, seq)),
-            [this](auto& params) {
-                auto& [key, seq] = params.data;
-                CassandraStatement stmt{cleanUpSuccessor_};
-                stmt.bindNextBytes(key);
-                stmt.bindNextInt(seq);
-                return stmt;
-            },
-            "cleanUpSuccessor");
-    }
+    BOOST_LOG_TRIVIAL(debug)
+        << "Cleaning up successor. key = " << ripple::strHex(key)
+        << " seq = " << seq;
+    makeAndExecuteAsyncWrite(
+        this,
+        std::move(std::make_tuple(std::string{key}, seq)),
+        [this](auto& params) {
+            auto& [key, seq] = params.data;
+            CassandraStatement stmt{cleanUpSuccessor_};
+            stmt.bindNextBytes(key);
+            stmt.bindNextInt(seq);
+            return stmt;
+        },
+        "cleanUpSuccessor");
     makeAndExecuteAsyncWrite(
         this,
         std::move(std::make_tuple(std::move(key), seq, std::move(successor))),
@@ -619,27 +616,31 @@ CassandraBackend::doFetchSuccessorKey(
         BOOST_LOG_TRIVIAL(debug) << __func__ << " - no rows";
         return {};
     }
-    if (cleanUp_)
-    {
-        BOOST_LOG_TRIVIAL(debug)
-            << "Cleaning up successor. key = " << ripple::strHex(key)
-            << " seq = " << ledgerSequence;
-        makeAndExecuteAsyncWrite(
-            this,
-            std::move(std::make_tuple(uint256ToString(key), ledgerSequence)),
-            [this](auto& params) {
-                auto& [key, seq] = params.data;
-                CassandraStatement stmt{cleanUpSuccessor_};
-                stmt.bindNextBytes(key);
-                stmt.bindNextInt(seq);
-                return stmt;
-            },
-            "cleanUpSuccessor");
-    }
     auto next = result.getUInt256();
     if (next == lastKey)
         return {};
     return next;
+}
+
+void
+CassandraBackend::cleanUpSuccessor(
+    ripple::uint256 const& key,
+    std::uint32_t seq)
+{
+    BOOST_LOG_TRIVIAL(debug)
+        << "Cleaning up successor. key = " << ripple::strHex(key)
+        << " seq = " << seq;
+    makeAndExecuteAsyncWrite(
+        this,
+        std::move(std::make_tuple(uint256ToString(key), seq)),
+        [this](auto& params) {
+            auto& [key, seq] = params.data;
+            CassandraStatement stmt{cleanUpSuccessor_};
+            stmt.bindNextBytes(key);
+            stmt.bindNextInt(seq);
+            return stmt;
+        },
+        "cleanUpSuccessor");
 }
 
 std::optional<Blob>
