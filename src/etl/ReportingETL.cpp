@@ -929,18 +929,15 @@ ReportingETL::loadCacheAsync(uint32_t seq)
         << ". cursors = " << cursorStr.str();
     std::atomic_uint* numRemaining = new std::atomic_uint{cursors.size() - 1};
 
-    boost::asio::io_context ctx;
     std::vector<boost::asio::io_context::strand> strands;
-    std::optional<boost::asio::io_context::work> work;
-    work.emplace(ctx);
     for (size_t i = 0; i < cursors.size() - 1; ++i)
     {
         std::optional<ripple::uint256> start = cursors[i];
         std::optional<ripple::uint256> end = cursors[i + 1];
-        strands.emplace_back(ctx);
+        strands.emplace_back(ioContext_);
         boost::asio::spawn(
             strands.back(),
-            [this, seq, start, end, numRemaining, &work](
+            [this, seq, start, end, numRemaining](
                 boost::asio::yield_context yield) {
                 std::optional<ripple::uint256> cursor = start;
                 while (true)
@@ -975,7 +972,6 @@ ReportingETL::loadCacheAsync(uint32_t seq)
                         << backend_->cache().size();
                     backend_->cache().setFull();
                     delete numRemaining;
-                    work.reset();
                 }
                 else
                 {
@@ -985,9 +981,15 @@ ReportingETL::loadCacheAsync(uint32_t seq)
                 }
             });
     }
-    BOOST_LOG_TRIVIAL(info) << __func__ << " Waiting for threads to finish";
-    ctx.run();
-    BOOST_LOG_TRIVIAL(info) << __func__ << " Done";
+    while (!backend_->cache().isFull())
+    {
+        BOOST_LOG_TRIVIAL(debug)
+            << "Cache not full. Cache size = " << backend_->cache().size()
+            << ". Sleeping ...";
+        std::this_thread::sleep_for(std::chrono::seconds(10));
+    }
+    BOOST_LOG_TRIVIAL(info)
+        << "Cache is full. Cache size = " << backend_->cache().size();
 }
 
 void

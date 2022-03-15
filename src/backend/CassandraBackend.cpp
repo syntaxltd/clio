@@ -627,7 +627,7 @@ CassandraBackend::cleanUpSuccessor(
     ripple::uint256 const& key,
     std::uint32_t seq)
 {
-    BOOST_LOG_TRIVIAL(debug)
+    BOOST_LOG_TRIVIAL(trace)
         << "Cleaning up successor. key = " << ripple::strHex(key)
         << " seq = " << seq;
     makeAndExecuteAsyncWrite(
