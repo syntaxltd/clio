@@ -1,9 +1,7 @@
-#include <backend/BackendInterface.h>
-#include <backend/Pg.h>
 #include <rpc/RPCHelpers.h>
 
 // {
-//   account: <ident>
+//   nft_id: <ident>
 //   ledger_hash: <ledger>
 //   ledger_index: <ledger_index>
 //   ledger_index_min: <OPTIONAL -1 or ledger_index>
@@ -17,24 +15,23 @@
 namespace RPC {
 
 Result
-doAccountTx(Context const& context)
+doNFTTx(Context const& context)
 {
-    auto request = context.params;
-
-    ripple::AccountID accountID;
-    if (auto const status = getAccount(request, accountID); status)
-        return status;
+    auto const maybeTokenID = getNFTID(context.params);
+    if (auto const status = std::get_if<Status>(&maybeTokenID))
+        return *status;
+    auto const tokenID = std::get<ripple::uint256>(maybeTokenID);
 
     auto const maybeResponse = traverseTransactions(
         context,
-        [&accountID, &context](
+        [&tokenID, &context](
             std::uint32_t const limit,
             bool const forward,
-            std::optional<Backend::TransactionsCursor> const& cursorIn) {
+            std::optional<Backend::TransactionsCursor> const& cursorIn)
+            -> Backend::TransactionsAndCursor {
             auto const start = std::chrono::system_clock::now();
-            auto const txnsAndCursor =
-                context.backend->fetchAccountTransactions(
-                    accountID, limit, forward, cursorIn, context.yield);
+            auto const txnsAndCursor = context.backend->fetchNFTTransactions(
+                tokenID, limit, forward, cursorIn, context.yield);
             BOOST_LOG_TRIVIAL(info)
                 << __func__ << " db fetch took "
                 << ((std::chrono::system_clock::now() - start).count() /
@@ -47,7 +44,7 @@ doAccountTx(Context const& context)
         return *status;
     auto response = std::get<boost::json::object>(maybeResponse);
 
-    response[JS(account)] = ripple::to_string(accountID);
+    response[JS(nft_id)] = ripple::to_string(tokenID);
     return response;
 }
 

@@ -24,6 +24,7 @@
 namespace RPC {
 std::optional<ripple::AccountID>
 accountFromStringStrict(std::string const& account);
+
 std::optional<ripple::AccountID>
 accountFromSeed(std::string const& account);
 
@@ -252,6 +253,19 @@ getChannelId(boost::json::object const& request, ripple::uint256& channelId);
 
 bool
 specifiesCurrentOrClosedLedger(boost::json::object const& request);
+
+std::variant<ripple::uint256, Status>
+getNFTID(boost::json::object const& request);
+
+// This function is the driver for both `account_tx` and `nft_tx` and should
+// be used for any future transaction enumeration APIs.
+std::variant<Status, boost::json::object>
+traverseTransactions(
+    Context const& context,
+    std::function<Backend::TransactionsAndCursor(
+        std::uint32_t const,
+        bool const,
+        std::optional<Backend::TransactionsCursor> const&)> getter);
 
 }  // namespace RPC
 #endif

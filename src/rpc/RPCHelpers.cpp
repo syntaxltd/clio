@@ -1478,4 +1478,210 @@ specifiesCurrentOrClosedLedger(boost::json::object const& request)
     return false;
 }
 
+std::variant<ripple::uint256, Status>
+getNFTID(boost::json::object const& request)
+{
+    if (!request.contains(JS(nft_id)))
+        return Status{Error::rpcINVALID_PARAMS, "missingTokenid"};
+
+    if (!request.at(JS(nft_id)).is_string())
+        return Status{Error::rpcINVALID_PARAMS, "tokenidNotString"};
+
+    ripple::uint256 tokenid;
+    if (!tokenid.parseHex(request.at(JS(nft_id)).as_string().c_str()))
+        return Status{Error::rpcINVALID_PARAMS, "malformedCursor"};
+
+    return tokenid;
+}
+
+// TODO - this function is long and shouldn't be responsible for as much as it
+// is. Split it out into some helper functions.
+std::variant<Status, boost::json::object>
+traverseTransactions(
+    Context const& context,
+    std::function<Backend::TransactionsAndCursor(
+        std::uint32_t const,
+        bool const,
+        std::optional<Backend::TransactionsCursor> const&)> getter)
+{
+    auto request = context.params;
+    boost::json::object response = {};
+
+    bool const binary = getBool(request, JS(binary), false);
+    bool const forward = getBool(request, JS(forward), false);
+
+    std::optional<Backend::TransactionsCursor> cursor;
+
+    if (request.contains(JS(marker)))
+    {
+        auto const& obj = request.at(JS(marker)).as_object();
+
+        std::optional<std::uint32_t> transactionIndex = {};
+        if (obj.contains(JS(seq)))
+        {
+            if (!obj.at(JS(seq)).is_int64())
+                return Status{
+                    Error::rpcINVALID_PARAMS, "transactionIndexNotInt"};
+
+            transactionIndex =
+                boost::json::value_to<std::uint32_t>(obj.at(JS(seq)));
+        }
+
+        std::optional<std::uint32_t> ledgerIndex = {};
+        if (obj.contains(JS(ledger)))
+        {
+            if (!obj.at(JS(ledger)).is_int64())
+                return Status{Error::rpcINVALID_PARAMS, "ledgerIndexNotInt"};
+
+            ledgerIndex =
+                boost::json::value_to<std::uint32_t>(obj.at(JS(ledger)));
+        }
+
+        if (!transactionIndex || !ledgerIndex)
+            return Status{Error::rpcINVALID_PARAMS, "missingLedgerOrSeq"};
+
+        cursor = {*ledgerIndex, *transactionIndex};
+    }
+
+    auto minIndex = context.range.minSequence;
+    if (request.contains(JS(ledger_index_min)))
+    {
+        auto& min = request.at(JS(ledger_index_min));
+
+        if (!min.is_int64())
+            return Status{Error::rpcINVALID_PARAMS, "ledgerSeqMinNotNumber"};
+
+        if (min.as_int64() != -1)
+        {
+            if (context.range.maxSequence < min.as_int64() ||
+                context.range.minSequence > min.as_int64())
+                return Status{
+                    Error::rpcINVALID_PARAMS, "ledgerSeqMinOutOfRange"};
+            else
+                minIndex = boost::json::value_to<std::uint32_t>(min);
+        }
+
+        if (forward && !cursor)
+            cursor = {minIndex, 0};
+    }
+
+    auto maxIndex = context.range.maxSequence;
+    if (request.contains(JS(ledger_index_max)))
+    {
+        auto& max = request.at(JS(ledger_index_max));
+
+        if (!max.is_int64())
+            return Status{Error::rpcINVALID_PARAMS, "ledgerSeqMaxNotNumber"};
+
+        if (max.as_int64() != -1)
+        {
+            if (context.range.maxSequence < max.as_int64() ||
+                context.range.minSequence > max.as_int64())
+                return Status{
+                    Error::rpcINVALID_PARAMS, "ledgerSeqMaxOutOfRange"};
+            else
+                maxIndex = boost::json::value_to<std::uint32_t>(max);
+        }
+
+        if (minIndex > maxIndex)
+            return Status{Error::rpcINVALID_PARAMS, "invalidIndex"};
+
+        if (!forward && !cursor)
+            cursor = {maxIndex, INT32_MAX};
+    }
+
+    if (request.contains(JS(ledger_index)) || request.contains(JS(ledger_hash)))
+    {
+        if (request.contains(JS(ledger_index_max)) ||
+            request.contains(JS(ledger_index_min)))
+            return Status{
+                Error::rpcINVALID_PARAMS, "containsLedgerSpecifierAndRange"};
+
+        auto v = ledgerInfoFromRequest(context);
+        if (auto status = std::get_if<Status>(&v))
+            return *status;
+
+        maxIndex = minIndex = std::get<ripple::LedgerInfo>(v).seq;
+    }
+
+    if (!cursor)
+    {
+        if (forward)
+            cursor = {minIndex, 0};
+        else
+            cursor = {maxIndex, INT32_MAX};
+    }
+
+    std::uint32_t limit;
+    if (auto const status = getLimit(context, limit); status)
+        return status;
+
+    if (request.contains(JS(limit)))
+        response[JS(limit)] = limit;
+
+    boost::json::array txns;
+    auto [blobs, retCursor] = getter(limit, forward, cursor);
+    auto dbFetchEnd = std::chrono::system_clock::now();
+
+    if (retCursor)
+    {
+        boost::json::object cursorJson;
+        cursorJson[JS(ledger)] = retCursor->ledgerSequence;
+        cursorJson[JS(seq)] = retCursor->transactionIndex;
+        response[JS(marker)] = cursorJson;
+    }
+
+    std::optional<size_t> maxReturnedIndex;
+    std::optional<size_t> minReturnedIndex;
+    for (auto const& txnPlusMeta : blobs)
+    {
+        if (txnPlusMeta.ledgerSequence < minIndex ||
+            txnPlusMeta.ledgerSequence > maxIndex)
+        {
+            BOOST_LOG_TRIVIAL(debug)
+                << __func__
+                << " skipping over transactions from incomplete ledger";
+            continue;
+        }
+
+        boost::json::object obj;
+
+        if (!binary)
+        {
+            auto [txn, meta] = toExpandedJson(txnPlusMeta);
+            obj[JS(meta)] = meta;
+            obj[JS(tx)] = txn;
+            obj[JS(tx)].as_object()[JS(ledger_index)] =
+                txnPlusMeta.ledgerSequence;
+            obj[JS(tx)].as_object()[JS(date)] = txnPlusMeta.date;
+        }
+        else
+        {
+            obj[JS(meta)] = ripple::strHex(txnPlusMeta.metadata);
+            obj[JS(tx_blob)] = ripple::strHex(txnPlusMeta.transaction);
+            obj[JS(ledger_index)] = txnPlusMeta.ledgerSequence;
+            obj[JS(date)] = txnPlusMeta.date;
+        }
+        obj[JS(validated)] = true;
+
+        txns.push_back(obj);
+        if (!minReturnedIndex || txnPlusMeta.ledgerSequence < *minReturnedIndex)
+            minReturnedIndex = txnPlusMeta.ledgerSequence;
+        if (!maxReturnedIndex || txnPlusMeta.ledgerSequence > *maxReturnedIndex)
+            maxReturnedIndex = txnPlusMeta.ledgerSequence;
+    }
+
+    response[JS(ledger_index_min)] = minIndex;
+    response[JS(ledger_index_max)] = maxIndex;
+
+    response[JS(transactions)] = txns;
+
+    auto serializationEnd = std::chrono::system_clock::now();
+    BOOST_LOG_TRIVIAL(info)
+        << __func__ << " serialization took "
+        << ((serializationEnd - dbFetchEnd).count() / 1000000000.0);
+
+    return response;
+}
+
 }  // namespace RPC

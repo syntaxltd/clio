@@ -651,6 +651,8 @@ CassandraBackend::fetchNFTTransactions(
                 static_cast<std::uint32_t>(lgrSeq),
                 static_cast<std::uint32_t>(txnIdx)};
 
+            // Only modify if forward because forward query is >= seq_idx,
+            // while reverse query handles this via < seq_idx
             if (forward)
                 ++cursor->transactionIndex;
         }
@@ -734,6 +736,8 @@ CassandraBackend::fetchAccountTransactions(
                 static_cast<std::uint32_t>(lgrSeq),
                 static_cast<std::uint32_t>(txnIdx)};
 
+            // Only modify if forward because forward query is >= seq_idx,
+            // while reverse query handles this via < seq_idx
             if (forward)
                 ++cursor->transactionIndex;
         }

@@ -1,3 +1,4 @@
 *clio*.log
 build/
 .python-version
+config.json
