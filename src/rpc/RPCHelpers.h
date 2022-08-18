@@ -265,7 +265,7 @@ traverseTransactions(
     std::function<Backend::TransactionsAndCursor(
         std::uint32_t const,
         bool const,
-        std::optional<Backend::TransactionsCursor> const&)> getter);
+        std::optional<Backend::TransactionsCursor> const&)> transactionFetcher);
 
 }  // namespace RPC
 #endif

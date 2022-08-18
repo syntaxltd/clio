@@ -806,15 +806,19 @@ traverseOwnedNodes(
     }
     auto end = std::chrono::system_clock::now();
 
-    BOOST_LOG_TRIVIAL(debug) << "Time loading owned directories: "
-                             << ((end - start).count() / 1000000000.0);
+    BOOST_LOG_TRIVIAL(debug)
+        << "Time loading owned directories: "
+        << std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
+               .count();
 
     start = std::chrono::system_clock::now();
     auto objects = backend.fetchLedgerObjects(keys, sequence, yield);
     end = std::chrono::system_clock::now();
 
-    BOOST_LOG_TRIVIAL(debug) << "Time loading owned entries: "
-                             << ((end - start).count() / 1000000000.0);
+    BOOST_LOG_TRIVIAL(debug)
+        << "Time loading owned entries: "
+        << std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
+               .count();
 
     for (auto i = 0; i < objects.size(); ++i)
     {
@@ -1482,14 +1486,14 @@ std::variant<ripple::uint256, Status>
 getNFTID(boost::json::object const& request)
 {
     if (!request.contains(JS(nft_id)))
-        return Status{Error::rpcINVALID_PARAMS, "missingTokenid"};
+        return Status{Error::rpcINVALID_PARAMS, "missingTokenID"};
 
     if (!request.at(JS(nft_id)).is_string())
-        return Status{Error::rpcINVALID_PARAMS, "tokenidNotString"};
+        return Status{Error::rpcINVALID_PARAMS, "tokenIDNotString"};
 
     ripple::uint256 tokenid;
     if (!tokenid.parseHex(request.at(JS(nft_id)).as_string().c_str()))
-        return Status{Error::rpcINVALID_PARAMS, "malformedCursor"};
+        return Status{Error::rpcINVALID_PARAMS, "malformedTokenID"};
 
     return tokenid;
 }
@@ -1502,7 +1506,7 @@ traverseTransactions(
     std::function<Backend::TransactionsAndCursor(
         std::uint32_t const,
         bool const,
-        std::optional<Backend::TransactionsCursor> const&)> getter)
+        std::optional<Backend::TransactionsCursor> const&)> transactionFetcher)
 {
     auto request = context.params;
     boost::json::object response = {};
@@ -1620,7 +1624,7 @@ traverseTransactions(
         response[JS(limit)] = limit;
 
     boost::json::array txns;
-    auto [blobs, retCursor] = getter(limit, forward, cursor);
+    auto [blobs, retCursor] = transactionFetcher(limit, forward, cursor);
     auto dbFetchEnd = std::chrono::system_clock::now();
 
     if (retCursor)
@@ -1679,7 +1683,9 @@ traverseTransactions(
     auto serializationEnd = std::chrono::system_clock::now();
     BOOST_LOG_TRIVIAL(info)
         << __func__ << " serialization took "
-        << ((serializationEnd - dbFetchEnd).count() / 1000000000.0);
+        << std::chrono::duration_cast<std::chrono::milliseconds>(
+               serializationEnd - dbFetchEnd)
+               .count();
 
     return response;
 }

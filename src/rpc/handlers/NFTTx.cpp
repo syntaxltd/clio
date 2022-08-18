@@ -34,8 +34,9 @@ doNFTTx(Context const& context)
                 tokenID, limit, forward, cursorIn, context.yield);
             BOOST_LOG_TRIVIAL(info)
                 << __func__ << " db fetch took "
-                << ((std::chrono::system_clock::now() - start).count() /
-                    1000000000.0)
+                << std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::system_clock::now() - start)
+                       .count()
                 << " num blobs = " << txnsAndCursor.txns.size();
             return txnsAndCursor;
         });

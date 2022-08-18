@@ -209,7 +209,7 @@ public:
     }
 
     bool
-    getIsClioOnly(std::string const& command)
+    isClioOnly(std::string const& command)
     {
         return handlerMap_.contains(command) && handlerMap_[command].isClioOnly;
     }
@@ -262,7 +262,7 @@ validHandler(std::string const& method)
 bool
 isClioOnly(std::string const& method)
 {
-    return handlerTable.getIsClioOnly(method);
+    return handlerTable.isClioOnly(method);
 }
 
 Status
