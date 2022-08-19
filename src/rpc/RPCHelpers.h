@@ -263,9 +263,11 @@ std::variant<Status, boost::json::object>
 traverseTransactions(
     Context const& context,
     std::function<Backend::TransactionsAndCursor(
+        std::shared_ptr<Backend::BackendInterface const> const& backend,
         std::uint32_t const,
         bool const,
-        std::optional<Backend::TransactionsCursor> const&)> transactionFetcher);
+        std::optional<Backend::TransactionsCursor> const&,
+        boost::asio::yield_context& yield)> transactionFetcher);
 
 }  // namespace RPC
 #endif

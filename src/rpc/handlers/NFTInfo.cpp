@@ -90,12 +90,12 @@ doNFTInfo(Context const& context)
     boost::json::object response = {};
 
     auto const maybeTokenID = getNFTID(request);
-    if (auto const status = std::get_if<Status>(&maybeTokenID))
+    if (auto const status = std::get_if<Status>(&maybeTokenID); status)
         return *status;
     auto const tokenID = std::get<ripple::uint256>(maybeTokenID);
 
     auto const maybeLedgerInfo = ledgerInfoFromRequest(context);
-    if (auto status = std::get_if<Status>(&maybeLedgerInfo))
+    if (auto status = std::get_if<Status>(&maybeLedgerInfo); status)
         return *status;
     auto const lgrInfo = std::get<ripple::LedgerInfo>(maybeLedgerInfo);
 
@@ -121,10 +121,10 @@ doNFTInfo(Context const& context)
     {
         auto const maybeURI = getURI(*dbResponse, context);
         // An error occurred
-        if (Status const* status = std::get_if<Status>(&maybeURI))
+        if (Status const* status = std::get_if<Status>(&maybeURI); status)
             return *status;
         // A URI was found
-        if (std::string const* uri = std::get_if<std::string>(&maybeURI))
+        if (std::string const* uri = std::get_if<std::string>(&maybeURI); uri)
             response["uri"] = *uri;
         // A URI was not found, explicitly set to null
         else

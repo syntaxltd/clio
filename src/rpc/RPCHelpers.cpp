@@ -268,7 +268,7 @@ getTaker(boost::json::object const& request, ripple::AccountID& takerID)
     if (request.contains(JS(taker)))
     {
         auto parsed = parseTaker(request.at(JS(taker)));
-        if (auto status = std::get_if<Status>(&parsed))
+        if (auto status = std::get_if<Status>(&parsed); status)
             return *status;
         else
             takerID = std::get<ripple::AccountID>(parsed);
@@ -1504,9 +1504,11 @@ std::variant<Status, boost::json::object>
 traverseTransactions(
     Context const& context,
     std::function<Backend::TransactionsAndCursor(
+        std::shared_ptr<Backend::BackendInterface const> const& backend,
         std::uint32_t const,
         bool const,
-        std::optional<Backend::TransactionsCursor> const&)> transactionFetcher)
+        std::optional<Backend::TransactionsCursor> const&,
+        boost::asio::yield_context& yield)> transactionFetcher)
 {
     auto request = context.params;
     boost::json::object response = {};
@@ -1602,7 +1604,7 @@ traverseTransactions(
                 Error::rpcINVALID_PARAMS, "containsLedgerSpecifierAndRange"};
 
         auto v = ledgerInfoFromRequest(context);
-        if (auto status = std::get_if<Status>(&v))
+        if (auto status = std::get_if<Status>(&v); status)
             return *status;
 
         maxIndex = minIndex = std::get<ripple::LedgerInfo>(v).seq;
@@ -1624,7 +1626,8 @@ traverseTransactions(
         response[JS(limit)] = limit;
 
     boost::json::array txns;
-    auto [blobs, retCursor] = transactionFetcher(limit, forward, cursor);
+    auto [blobs, retCursor] = transactionFetcher(
+        context.backend, limit, forward, cursor, context.yield);
     auto dbFetchEnd = std::chrono::system_clock::now();
 
     if (retCursor)
@@ -1635,8 +1638,6 @@ traverseTransactions(
         response[JS(marker)] = cursorJson;
     }
 
-    std::optional<size_t> maxReturnedIndex;
-    std::optional<size_t> minReturnedIndex;
     for (auto const& txnPlusMeta : blobs)
     {
         if (txnPlusMeta.ledgerSequence < minIndex ||
@@ -1669,10 +1670,6 @@ traverseTransactions(
         obj[JS(validated)] = true;
 
         txns.push_back(obj);
-        if (!minReturnedIndex || txnPlusMeta.ledgerSequence < *minReturnedIndex)
-            minReturnedIndex = txnPlusMeta.ledgerSequence;
-        if (!maxReturnedIndex || txnPlusMeta.ledgerSequence > *maxReturnedIndex)
-            maxReturnedIndex = txnPlusMeta.ledgerSequence;
     }
 
     response[JS(ledger_index_min)] = minIndex;
@@ -1680,11 +1677,10 @@ traverseTransactions(
 
     response[JS(transactions)] = txns;
 
-    auto serializationEnd = std::chrono::system_clock::now();
     BOOST_LOG_TRIVIAL(info)
         << __func__ << " serialization took "
         << std::chrono::duration_cast<std::chrono::milliseconds>(
-               serializationEnd - dbFetchEnd)
+               std::chrono::system_clock::now() - dbFetchEnd)
                .count();
 
     return response;

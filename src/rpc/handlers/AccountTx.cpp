@@ -2,18 +2,6 @@
 #include <backend/Pg.h>
 #include <rpc/RPCHelpers.h>
 
-// {
-//   account: <ident>
-//   ledger_hash: <ledger>
-//   ledger_index: <ledger_index>
-//   ledger_index_min: <OPTIONAL -1 or ledger_index>
-//   ledger_index_max: <OPTIONAL -1 or ledger_index>
-//   binary: <OPTIONAL bool>
-//   forward: <OPTIONAL bool>
-//   limit: <OPTIONAL integer>
-//   marker: <OPTIONAL marker>
-// }
-
 namespace RPC {
 
 Result
@@ -27,14 +15,15 @@ doAccountTx(Context const& context)
 
     auto const maybeResponse = traverseTransactions(
         context,
-        [&accountID, &context](
+        [&accountID](
+            std::shared_ptr<Backend::BackendInterface const> const& backend,
             std::uint32_t const limit,
             bool const forward,
-            std::optional<Backend::TransactionsCursor> const& cursorIn) {
+            std::optional<Backend::TransactionsCursor> const& cursorIn,
+            boost::asio::yield_context& yield) {
             auto const start = std::chrono::system_clock::now();
-            auto const txnsAndCursor =
-                context.backend->fetchAccountTransactions(
-                    accountID, limit, forward, cursorIn, context.yield);
+            auto const txnsAndCursor = backend->fetchAccountTransactions(
+                accountID, limit, forward, cursorIn, yield);
             BOOST_LOG_TRIVIAL(info)
                 << __func__ << " db fetch took "
                 << std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -44,7 +33,7 @@ doAccountTx(Context const& context)
             return txnsAndCursor;
         });
 
-    if (auto const status = std::get_if<Status>(&maybeResponse))
+    if (auto const status = std::get_if<Status>(&maybeResponse); status)
         return *status;
     auto response = std::get<boost::json::object>(maybeResponse);
 
