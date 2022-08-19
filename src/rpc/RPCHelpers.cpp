@@ -1520,6 +1520,8 @@ traverseTransactions(
 
     if (request.contains(JS(marker)))
     {
+        if (!request.at(JS(marker)).is_object())
+            return Status{Error::rpcINVALID_PARAMS, "invalidMarker"};
         auto const& obj = request.at(JS(marker)).as_object();
 
         std::optional<std::uint32_t> transactionIndex = {};

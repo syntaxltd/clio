@@ -75,8 +75,8 @@ target_sources(clio PRIVATE
   src/rpc/handlers/NoRippleCheck.cpp
   # NFT
   src/rpc/handlers/NFTInfo.cpp
-  src/rpc/handlers/NFTTx.cpp
   src/rpc/handlers/NFTOffers.cpp
+  src/rpc/handlers/NFTTx.cpp
   # Ledger
   src/rpc/handlers/Ledger.cpp
   src/rpc/handlers/LedgerData.cpp
