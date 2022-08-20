@@ -25,11 +25,11 @@ doAccountTx(Context const& context)
             auto const txnsAndCursor = backend->fetchAccountTransactions(
                 accountID, limit, forward, cursorIn, yield);
             BOOST_LOG_TRIVIAL(info)
-                << __func__ << " db fetch took "
+                << "doAccountTx db fetch took "
                 << std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::system_clock::now() - start)
                        .count()
-                << " num blobs = " << txnsAndCursor.txns.size();
+                << " milliseconds - num blobs = " << txnsAndCursor.txns.size();
             return txnsAndCursor;
         });
 

@@ -809,7 +809,8 @@ traverseOwnedNodes(
     BOOST_LOG_TRIVIAL(debug)
         << "Time loading owned directories: "
         << std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
-               .count();
+               .count()
+        << " milliseconds";
 
     start = std::chrono::system_clock::now();
     auto objects = backend.fetchLedgerObjects(keys, sequence, yield);
@@ -818,7 +819,8 @@ traverseOwnedNodes(
     BOOST_LOG_TRIVIAL(debug)
         << "Time loading owned entries: "
         << std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
-               .count();
+               .count()
+        << " milliseconds";
 
     for (auto i = 0; i < objects.size(); ++i)
     {
@@ -1683,7 +1685,8 @@ traverseTransactions(
         << __func__ << " serialization took "
         << std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::system_clock::now() - dbFetchEnd)
-               .count();
+               .count()
+        << " milliseconds";
 
     return response;
 }
