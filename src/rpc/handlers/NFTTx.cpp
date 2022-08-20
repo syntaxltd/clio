@@ -10,9 +10,10 @@ doNFTTx(Context const& context)
         return *status;
     auto const tokenID = std::get<ripple::uint256>(maybeTokenID);
 
+    constexpr std::string_view outerFuncName = __func__;
     auto const maybeResponse = traverseTransactions(
         context,
-        [&tokenID](
+        [&tokenID, &outerFuncName](
             std::shared_ptr<Backend::BackendInterface const> const& backend,
             std::uint32_t const limit,
             bool const forward,
@@ -23,7 +24,7 @@ doNFTTx(Context const& context)
             auto const txnsAndCursor = backend->fetchNFTTransactions(
                 tokenID, limit, forward, cursorIn, yield);
             BOOST_LOG_TRIVIAL(info)
-                << "doNFTTx db fetch took "
+                << outerFuncName << " db fetch took "
                 << std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::system_clock::now() - start)
                        .count()

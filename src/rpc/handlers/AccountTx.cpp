@@ -1,5 +1,3 @@
-#include <backend/BackendInterface.h>
-#include <backend/Pg.h>
 #include <rpc/RPCHelpers.h>
 
 namespace RPC {
@@ -7,15 +5,14 @@ namespace RPC {
 Result
 doAccountTx(Context const& context)
 {
-    auto request = context.params;
-
     ripple::AccountID accountID;
-    if (auto const status = getAccount(request, accountID); status)
+    if (auto const status = getAccount(context.params, accountID); status)
         return status;
 
+    constexpr std::string_view outerFuncName = __func__;
     auto const maybeResponse = traverseTransactions(
         context,
-        [&accountID](
+        [&accountID, &outerFuncName](
             std::shared_ptr<Backend::BackendInterface const> const& backend,
             std::uint32_t const limit,
             bool const forward,
@@ -25,7 +22,7 @@ doAccountTx(Context const& context)
             auto const txnsAndCursor = backend->fetchAccountTransactions(
                 accountID, limit, forward, cursorIn, yield);
             BOOST_LOG_TRIVIAL(info)
-                << "doAccountTx db fetch took "
+                << outerFuncName << " db fetch took "
                 << std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::system_clock::now() - start)
                        .count()
