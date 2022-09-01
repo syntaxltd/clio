@@ -1632,7 +1632,7 @@ traverseTransactions(
     boost::json::array txns;
     auto [blobs, retCursor] = transactionFetcher(
         context.backend, limit, forward, cursor, context.yield);
-    auto dbFetchEnd = std::chrono::system_clock::now();
+    auto serializationStart = std::chrono::system_clock::now();
 
     if (retCursor)
     {
@@ -1684,7 +1684,7 @@ traverseTransactions(
     BOOST_LOG_TRIVIAL(info)
         << __func__ << " serialization took "
         << std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::system_clock::now() - dbFetchEnd)
+               std::chrono::system_clock::now() - serializationStart)
                .count()
         << " milliseconds";
 
