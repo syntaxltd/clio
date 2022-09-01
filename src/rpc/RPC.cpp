@@ -168,6 +168,7 @@ struct Handler
     std::string method;
     std::function<Result(Context const&)> handler;
     std::optional<LimitRange> limit;
+    bool isClioOnly = false;
 };
 
 class HandlerTable
@@ -206,6 +207,12 @@ public:
 
         return handlerMap_[command].handler;
     }
+
+    bool
+    isClioOnly(std::string const& command)
+    {
+        return handlerMap_.contains(command) && handlerMap_[command].isClioOnly;
+    }
 };
 
 static HandlerTable handlerTable{
@@ -223,8 +230,9 @@ static HandlerTable handlerTable{
     {"ledger", &doLedger, {}},
     {"ledger_data", &doLedgerData, LimitRange{1, 100, 2048}},
     {"nft_buy_offers", &doNFTBuyOffers, LimitRange{1, 50, 100}},
-    {"nft_info", &doNFTInfo},
+    {"nft_info", &doNFTInfo, {}, true},
     {"nft_sell_offers", &doNFTSellOffers, LimitRange{1, 50, 100}},
+    {"nft_tx", &doNFTTx, LimitRange{1, 50, 100}, true},
     {"ledger_entry", &doLedgerEntry, {}},
     {"ledger_range", &doLedgerRange, {}},
     {"subscribe", &doSubscribe, {}},
@@ -249,6 +257,12 @@ bool
 validHandler(std::string const& method)
 {
     return handlerTable.contains(method) || forwardCommands.contains(method);
+}
+
+bool
+isClioOnly(std::string const& method)
+{
+    return handlerTable.isClioOnly(method);
 }
 
 Status
@@ -285,6 +299,9 @@ bool
 shouldForwardToRippled(Context const& ctx)
 {
     auto request = ctx.params;
+
+    if (isClioOnly(ctx.method))
+        return false;
 
     if (forwardCommands.find(ctx.method) != forwardCommands.end())
         return true;
