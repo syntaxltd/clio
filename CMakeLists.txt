@@ -54,6 +54,7 @@ target_sources(clio PRIVATE
   src/backend/SimpleCache.cpp
   ## ETL
   src/etl/ETLSource.cpp
+  src/etl/ProbingETLSource.cpp
   src/etl/NFTHelpers.cpp
   src/etl/ReportingETL.cpp
   ## Subscriptions
@@ -87,6 +88,7 @@ target_sources(clio PRIVATE
   src/rpc/handlers/TransactionEntry.cpp
   src/rpc/handlers/AccountTx.cpp
   # Dex
+  src/rpc/handlers/BookChanges.cpp
   src/rpc/handlers/BookOffers.cpp
   # Payment Channel
   src/rpc/handlers/ChannelAuthorize.cpp
