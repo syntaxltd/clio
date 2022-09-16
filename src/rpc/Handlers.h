@@ -62,7 +62,7 @@ Result
 doNFTInfo(Context const& context);
 
 Result
-doNFTTx(Context const& context);
+doNFTHistory(Context const& context);
 
 // ledger methods
 Result
