@@ -1,5 +1,23 @@
-#ifndef RIPPLE_REPORTING_HTTP_BASE_SESSION_H
-#define RIPPLE_REPORTING_HTTP_BASE_SESSION_H
+//------------------------------------------------------------------------------
+/*
+    This file is part of clio: https://github.com/XRPLF/clio
+    Copyright (c) 2022, the clio developers.
+
+    Permission to use, copy, modify, and distribute this software for any
+    purpose with or without fee is hereby granted, provided that the above
+    copyright notice and this permission notice appear in all copies.
+
+    THE  SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+    WITH  REGARD  TO  THIS  SOFTWARE  INCLUDING  ALL  IMPLIED  WARRANTIES  OF
+    MERCHANTABILITY  AND  FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+    ANY  SPECIAL,  DIRECT,  INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+    WHATSOEVER  RESULTING  FROM  LOSS  OF USE, DATA OR PROFITS, WHETHER IN AN
+    ACTION  OF  CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+*/
+//==============================================================================
+
+#pragma once
 
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/spawn.hpp>
@@ -19,6 +37,7 @@
 #include <thread>
 
 #include <etl/ReportingETL.h>
+#include <log/Logger.h>
 #include <main/Build.h>
 #include <rpc/Counters.h>
 #include <rpc/RPC.h>
@@ -27,6 +46,7 @@
 #include <vector>
 #include <webserver/DOSGuard.h>
 
+// TODO: consider removing those - visible to anyone including this header
 namespace http = boost::beast::http;
 namespace net = boost::asio;
 namespace ssl = boost::asio::ssl;
@@ -101,7 +121,9 @@ class HttpBase : public util::Taggable
     send_lambda lambda_;
 
 protected:
+    clio::Logger perfLog_{"Performance"};
     boost::beast::flat_buffer buffer_;
+    bool upgraded_ = false;
 
     bool
     dead()
@@ -135,8 +157,7 @@ protected:
         if (!ec_ && ec != boost::asio::error::operation_aborted)
         {
             ec_ = ec;
-            BOOST_LOG_TRIVIAL(info)
-                << tag() << __func__ << ": " << what << ": " << ec.message();
+            perfLog_.info() << tag() << ": " << what << ": " << ec.message();
             boost::beast::get_lowest_layer(derived().stream())
                 .socket()
                 .close(ec);
@@ -168,11 +189,18 @@ public:
         , lambda_(*this)
         , buffer_(std::move(buffer))
     {
-        BOOST_LOG_TRIVIAL(debug) << tag() << "http session created";
+        perfLog_.debug() << tag() << "http session created";
     }
+
     virtual ~HttpBase()
     {
-        BOOST_LOG_TRIVIAL(debug) << tag() << "http session closed";
+        perfLog_.debug() << tag() << "http session closed";
+    }
+
+    DOSGuard&
+    dosGuard()
+    {
+        return dosGuard_;
     }
 
     void
@@ -211,12 +239,14 @@ public:
 
         if (boost::beast::websocket::is_upgrade(req_))
         {
+            upgraded_ = true;
             // Disable the timeout.
             // The websocket::stream uses its own timeout settings.
             boost::beast::get_lowest_layer(derived().stream()).expires_never();
             return make_websocket_session(
                 ioc_,
                 derived().release_stream(),
+                derived().ip(),
                 std::move(req_),
                 std::move(buffer_),
                 backend_,
@@ -234,9 +264,8 @@ public:
         if (!ip)
             return;
 
-        BOOST_LOG_TRIVIAL(debug) << tag() << "http::" << __func__
-                                 << " received request from ip = " << *ip
-                                 << " - posting to WorkQueue";
+        perfLog_.debug() << tag() << "Received request from ip = " << *ip
+                         << " - posting to WorkQueue";
 
         auto session = derived().shared_from_this();
 
@@ -256,7 +285,8 @@ public:
                         dosGuard_,
                         counters_,
                         *ip,
-                        session);
+                        session,
+                        perfLog_);
                 },
                 dosGuard_.isWhiteListed(*ip)))
         {
@@ -270,7 +300,7 @@ public:
             res.set(http::field::content_type, "application/json");
             res.keep_alive(req_.keep_alive());
             res.body() = boost::json::serialize(
-                RPC::make_error(RPC::Error::rpcTOO_BUSY));
+                RPC::makeError(RPC::RippledError::rpcTOO_BUSY));
             res.prepare_payload();
             lambda_(std::move(res));
         }
@@ -321,7 +351,8 @@ handle_request(
     DOSGuard& dosGuard,
     RPC::Counters& counters,
     std::string const& ip,
-    std::shared_ptr<Session> http)
+    std::shared_ptr<Session> http,
+    clio::Logger& perfLog)
 {
     auto const httpResponse = [&req](
                                   http::status status,
@@ -356,9 +387,9 @@ handle_request(
 
     try
     {
-        BOOST_LOG_TRIVIAL(debug)
-            << http->tag()
-            << "http received request from work queue: " << req.body();
+        perfLog.debug() << http->tag()
+                        << "http received request from work queue: "
+                        << req.body();
 
         boost::json::object request;
         std::string responseStr = "";
@@ -375,7 +406,7 @@ handle_request(
                 http::status::ok,
                 "application/json",
                 boost::json::serialize(
-                    RPC::make_error(RPC::Error::rpcBAD_SYNTAX))));
+                    RPC::makeError(RPC::RippledError::rpcBAD_SYNTAX))));
         }
 
         auto range = backend->fetchLedgerRange();
@@ -384,7 +415,7 @@ handle_request(
                 http::status::ok,
                 "application/json",
                 boost::json::serialize(
-                    RPC::make_error(RPC::Error::rpcNOT_READY))));
+                    RPC::makeError(RPC::RippledError::rpcNOT_READY))));
 
         std::optional<RPC::Context> context = RPC::make_HttpContext(
             yc,
@@ -403,11 +434,9 @@ handle_request(
                 http::status::ok,
                 "application/json",
                 boost::json::serialize(
-                    RPC::make_error(RPC::Error::rpcBAD_SYNTAX))));
+                    RPC::makeError(RPC::RippledError::rpcBAD_SYNTAX))));
 
-        boost::json::object response{{"result", boost::json::object{}}};
-        boost::json::object& result = response["result"].as_object();
-
+        boost::json::object response;
         auto start = std::chrono::system_clock::now();
         auto v = RPC::buildResponse(*context);
         auto end = std::chrono::system_clock::now();
@@ -418,12 +447,12 @@ handle_request(
         if (auto status = std::get_if<RPC::Status>(&v))
         {
             counters.rpcErrored(context->method);
-            auto error = RPC::make_error(*status);
+            auto error = RPC::makeError(*status);
             error["request"] = request;
-            result = error;
+            response["result"] = error;
 
-            BOOST_LOG_TRIVIAL(debug) << http->tag() << __func__
-                                     << " Encountered error: " << responseStr;
+            perfLog.debug()
+                << http->tag() << "Encountered error: " << responseStr;
         }
         else
         {
@@ -431,23 +460,28 @@ handle_request(
             // requests as successful.
 
             counters.rpcComplete(context->method, us);
-            result = std::get<boost::json::object>(v);
+
+            auto result = std::get<boost::json::object>(v);
+            if (result.contains("result") && result.at("result").is_object())
+                result = result.at("result").as_object();
 
             if (!result.contains("error"))
                 result["status"] = "success";
+
+            response["result"] = result;
         }
 
         boost::json::array warnings;
-        warnings.emplace_back(RPC::make_warning(RPC::warnRPC_CLIO));
+        warnings.emplace_back(RPC::makeWarning(RPC::warnRPC_CLIO));
         auto lastCloseAge = context->etl->lastCloseAgeSeconds();
         if (lastCloseAge >= 60)
-            warnings.emplace_back(RPC::make_warning(RPC::warnRPC_OUTDATED));
+            warnings.emplace_back(RPC::makeWarning(RPC::warnRPC_OUTDATED));
         response["warnings"] = warnings;
         responseStr = boost::json::serialize(response);
         if (!dosGuard.add(ip, responseStr.size()))
         {
             response["warning"] = "load";
-            warnings.emplace_back(RPC::make_warning(RPC::warnRPC_RATE_LIMIT));
+            warnings.emplace_back(RPC::makeWarning(RPC::warnRPC_RATE_LIMIT));
             response["warnings"] = warnings;
             // reserialize when we need to include this warning
             responseStr = boost::json::serialize(response);
@@ -457,13 +491,11 @@ handle_request(
     }
     catch (std::exception const& e)
     {
-        BOOST_LOG_TRIVIAL(error)
-            << http->tag() << __func__ << " Caught exception : " << e.what();
+        perfLog.error() << http->tag() << "Caught exception : " << e.what();
         return send(httpResponse(
             http::status::internal_server_error,
             "application/json",
-            boost::json::serialize(RPC::make_error(RPC::Error::rpcINTERNAL))));
+            boost::json::serialize(
+                RPC::makeError(RPC::RippledError::rpcINTERNAL))));
     }
 }
-
-#endif  // RIPPLE_REPORTING_HTTP_BASE_SESSION_H

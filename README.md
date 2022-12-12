@@ -28,7 +28,7 @@ Use these instructions to build a Clio executable from the source. These instruc
 
 ```sh
 # Install dependencies
-  sudo apt-get -y install git pkg-config protobuf-compiler libprotobuf-dev libssl-dev wget build-essential bison flex autoconf cmake
+  sudo apt-get -y install git pkg-config protobuf-compiler libprotobuf-dev libssl-dev wget build-essential bison flex autoconf cmake clang-format
 
 # Compile Boost
   wget -O $HOME/boost_1_75_0.tar.gz https://boostorg.jfrog.io/artifactory/main/release/1.75.0/source/boost_1_75_0.tar.gz
@@ -71,6 +71,39 @@ server is running
 3. change the IP specified in `secure_gateway` of `port_grpc` section of the rippled config
 to the IP of your Clio server. This entry can take the form of a comma-separated list if
 you are running multiple Clio nodes.
+
+
+In addition, the parameter `start_sequence` can be included and configured within the top level of the config file. This parameter specifies the sequence of first ledger to extract if the database is empty. Note that ETL extracts ledgers in order and that no backfilling functionality currently exists, meaning Clio will not retroactively learn ledgers older than the one you specify. Choosing to specify this or not will yield the following behavior:
+- If this setting is absent and the database is empty, ETL will start with the next ledger validated by the network. 
+- If this setting is present and the database is not empty, an exception is thrown.
+
+In addition, the optional parameter `finish_sequence` can be added to the json file as well, specifying where the ledger can stop.
+
+To add `start_sequence` and/or `finish_sequence` to the config.json file appropriately, they will be on the same top level of precedence as other parameters (such as database, etl_sources, read_only, etc.) and be specified with an integer. Here is an example below, added at the end of the config.json:
+
+```json
+    ...
+    "read_only": false,
+    "start_sequence": [integer] the ledger index to start from
+    "finish_sequence": [integer] the ledger index to finish at
+```
+
+The parameters `ssl_cert_file` and `ssl_key_file` can also be added to the top level of precedence of our Clio config. `ssl_cert_file` specifies the filepath for your SSL cert while `ssl_key_file` specifies the filepath for your SSL key. It is up to you how to change ownership of these folders for your designated Clio user. Your options include:
+- Copying the two files as root somewhere that's accessible by the Clio user, then running `sudo chown` to your user
+- Changing the permissions directly so it's readable by your Clio user
+- Running Clio as root (strongly discouraged)
+
+An example of how to include `ssl_cert_file` and `ssl_key_file` in the Clio config are below:
+```json
+{
+    "server":{
+        "ip": "0.0.0.0",
+        "port": 51233
+    },
+    "ssl_cert_file" : "/full/path/to/cert.file",
+    "ssl_key_file" : "/full/path/to/key.file"
+}
+```
 
 Once your config files are ready, start rippled and Clio. It doesn't matter which you
 start first, and it's fine to stop one or the other and restart at any given time.

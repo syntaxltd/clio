@@ -1,80 +1,49 @@
-#ifndef RIPPLE_REPORTING_DOS_GUARD_H
-#define RIPPLE_REPORTING_DOS_GUARD_H
+//------------------------------------------------------------------------------
+/*
+    This file is part of clio: https://github.com/XRPLF/clio
+    Copyright (c) 2022, the clio developers.
+
+    Permission to use, copy, modify, and distribute this software for any
+    purpose with or without fee is hereby granted, provided that the above
+    copyright notice and this permission notice appear in all copies.
+
+    THE  SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+    WITH  REGARD  TO  THIS  SOFTWARE  INCLUDING  ALL  IMPLIED  WARRANTIES  OF
+    MERCHANTABILITY  AND  FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+    ANY  SPECIAL,  DIRECT,  INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+    WHATSOEVER  RESULTING  FROM  LOSS  OF USE, DATA OR PROFITS, WHETHER IN AN
+    ACTION  OF  CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+*/
+//==============================================================================
+
+#pragma once
 
 #include <boost/asio.hpp>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 
+#include <config/Config.h>
+
 class DOSGuard
 {
     boost::asio::io_context& ctx_;
     std::mutex mtx_;  // protects ipFetchCount_
     std::unordered_map<std::string, std::uint32_t> ipFetchCount_;
+    std::unordered_map<std::string, std::uint32_t> ipConnCount_;
     std::unordered_set<std::string> const whitelist_;
     std::uint32_t const maxFetches_;
     std::uint32_t const sweepInterval_;
-
-    // Load config setting for DOSGuard
-    std::optional<boost::json::object>
-    getConfig(boost::json::object const& config) const
-    {
-        if (!config.contains("dos_guard"))
-            return {};
-
-        return config.at("dos_guard").as_object();
-    }
-
-    std::uint32_t
-    get(boost::json::object const& config,
-        std::string const& key,
-        std::uint32_t const fallback) const
-    {
-        try
-        {
-            if (auto const c = getConfig(config))
-                return c->at(key).as_int64();
-        }
-        catch (std::exception const& e)
-        {
-        }
-
-        return fallback;
-    }
-
-    std::unordered_set<std::string> const
-    getWhitelist(boost::json::object const& config) const
-    {
-        using T = std::unordered_set<std::string> const;
-
-        try
-        {
-            auto const& c = getConfig(config);
-            if (!c)
-                return T();
-
-            auto const& w = c->at("whitelist").as_array();
-
-            auto const transform = [](auto const& elem) {
-                return std::string(elem.as_string().c_str());
-            };
-
-            return T(
-                boost::transform_iterator(w.begin(), transform),
-                boost::transform_iterator(w.end(), transform));
-        }
-        catch (std::exception const& e)
-        {
-            return T();
-        }
-    }
+    std::uint32_t const maxConnCount_;
 
 public:
-    DOSGuard(boost::json::object const& config, boost::asio::io_context& ctx)
-        : ctx_(ctx)
-        , whitelist_(getWhitelist(config))
-        , maxFetches_(get(config, "max_fetches", 100))
-        , sweepInterval_(get(config, "sweep_interval", 1))
+    DOSGuard(clio::Config const& config, boost::asio::io_context& ctx)
+        : ctx_{ctx}
+        , whitelist_{getWhitelist(config)}
+        , maxFetches_{config.valueOr("dos_guard.max_fetches", 100000000u)}
+        , sweepInterval_{config.valueOr("dos_guard.sweep_interval", 10u)}
+        , maxConnCount_{config.valueOr("dos_guard.max_connections", 1u)}
     {
         createTimer();
     }
@@ -106,11 +75,44 @@ public:
             return true;
 
         std::unique_lock lck(mtx_);
-        auto it = ipFetchCount_.find(ip);
-        if (it == ipFetchCount_.end())
-            return true;
+        bool fetchesOk = true;
+        bool connsOk = true;
+        {
+            auto it = ipFetchCount_.find(ip);
+            if (it != ipFetchCount_.end())
+                fetchesOk = it->second <= maxFetches_;
+        }
+        {
+            auto it = ipConnCount_.find(ip);
+            assert(it != ipConnCount_.end());
+            if (it != ipConnCount_.end())
+            {
+                connsOk = it->second <= maxConnCount_;
+            }
+        }
 
-        return it->second < maxFetches_;
+        return fetchesOk && connsOk;
+    }
+
+    void
+    increment(std::string const& ip)
+    {
+        if (whitelist_.contains(ip))
+            return;
+        std::unique_lock lck{mtx_};
+        ipConnCount_[ip]++;
+    }
+
+    void
+    decrement(std::string const& ip)
+    {
+        if (whitelist_.contains(ip))
+            return;
+        std::unique_lock lck{mtx_};
+        assert(ipConnCount_[ip] > 0);
+        ipConnCount_[ip]--;
+        if (ipConnCount_[ip] == 0)
+            ipConnCount_.erase(ip);
     }
 
     bool
@@ -137,5 +139,18 @@ public:
         std::unique_lock lck(mtx_);
         ipFetchCount_.clear();
     }
+
+private:
+    std::unordered_set<std::string> const
+    getWhitelist(clio::Config const& config) const
+    {
+        using T = std::unordered_set<std::string> const;
+        auto whitelist = config.arrayOr("dos_guard.whitelist", {});
+        auto const transform = [](auto const& elem) {
+            return elem.template value<std::string>();
+        };
+        return T{
+            boost::transform_iterator(std::begin(whitelist), transform),
+            boost::transform_iterator(std::end(whitelist), transform)};
+    }
 };
-#endif
