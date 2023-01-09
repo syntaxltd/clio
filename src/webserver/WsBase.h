@@ -28,6 +28,7 @@
 #include <rpc/WorkQueue.h>
 #include <subscriptions/Message.h>
 #include <subscriptions/SubscriptionManager.h>
+#include <util/Profiler.h>
 #include <util/Taggable.h>
 #include <webserver/DOSGuard.h>
 
@@ -121,7 +122,7 @@ class WsSession : public WsBase,
     std::shared_ptr<ETLLoadBalancer> balancer_;
     std::shared_ptr<ReportingETL const> etl_;
     util::TagDecoratorFactory const& tagFactory_;
-    DOSGuard& dosGuard_;
+    clio::DOSGuard& dosGuard_;
     RPC::Counters& counters_;
     WorkQueue& queue_;
     std::mutex mtx_;
@@ -155,7 +156,7 @@ public:
         std::shared_ptr<ETLLoadBalancer> balancer,
         std::shared_ptr<ReportingETL const> etl,
         util::TagDecoratorFactory const& tagFactory,
-        DOSGuard& dosGuard,
+        clio::DOSGuard& dosGuard,
         RPC::Counters& counters,
         WorkQueue& queue,
         boost::beast::flat_buffer&& buffer)
@@ -343,11 +344,10 @@ public:
 
             response = getDefaultWsResponse(id);
 
-            auto start = std::chrono::system_clock::now();
-            auto v = RPC::buildResponse(*context);
-            auto end = std::chrono::system_clock::now();
-            auto us = std::chrono::duration_cast<std::chrono::microseconds>(
-                end - start);
+            auto [v, timeDiff] =
+                util::timed([&]() { return RPC::buildResponse(*context); });
+
+            auto us = std::chrono::duration<int, std::milli>(timeDiff);
             logDuration(*context, us);
 
             if (auto status = std::get_if<RPC::Status>(&v))
@@ -452,19 +452,22 @@ public:
         }(std::move(msg));
 
         boost::json::object request;
-        if (!raw.is_object())
-            return sendError(
-                RPC::RippledError::rpcINVALID_PARAMS, nullptr, request);
-        request = raw.as_object();
-
-        auto id = request.contains("id") ? request.at("id") : nullptr;
-
-        if (!dosGuard_.isOk(*ip))
+        // dosGuard served request++ and check ip address
+        // dosGuard should check before any request, even invalid request
+        if (!dosGuard_.request(*ip))
         {
-            sendError(RPC::RippledError::rpcSLOW_DOWN, id, request);
+            sendError(RPC::RippledError::rpcSLOW_DOWN, nullptr, request);
+        }
+        else if (!raw.is_object())
+        {
+            // handle invalid request and async read again
+            sendError(RPC::RippledError::rpcINVALID_PARAMS, nullptr, request);
         }
         else
         {
+            request = raw.as_object();
+
+            auto id = request.contains("id") ? request.at("id") : nullptr;
             perfLog_.debug() << tag() << "Adding to work queue";
 
             if (!queue_.postCoro(
