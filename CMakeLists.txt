@@ -14,21 +14,7 @@ if(VERBOSE)
   set(FETCHCONTENT_QUIET FALSE CACHE STRING "Verbose FetchContent()")
 endif()
 
-if(NOT GIT_COMMIT_HASH)
-  if(VERBOSE)
-    message("GIT_COMMIT_HASH not provided...looking for git")
-  endif()
-  find_package(Git)
-  if(Git_FOUND)
-      execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
-          OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE git-ref)
-      if(git-ref)
-          set(BUILD "${git-ref}")
-          message(STATUS "Build version: ${BUILD}")
-          add_definitions(-DCLIO_BUILD="${BUILD}")
-      endif()
-  endif()
-endif() #git
+
 if(PACKAGING)
   add_definitions(-DPKG=1)
 endif()
@@ -109,14 +95,21 @@ add_executable(clio_server src/main/main.cpp)
 target_link_libraries(clio_server PUBLIC clio)
 
 if(BUILD_TESTS)
-  add_executable(clio_tests
-    unittests/RPCErrors.cpp
-    unittests/Backend.cpp
-    unittests/Logger.cpp
-    unittests/Config.cpp
-    unittests/ProfilerTest.cpp
-    unittests/DOSGuard.cpp)
+  set(TEST_TARGET clio_tests)
+  add_executable(${TEST_TARGET}
+  unittests/RPCErrors.cpp
+  unittests/Backend.cpp
+  unittests/Logger.cpp
+  unittests/Config.cpp
+  unittests/ProfilerTest.cpp
+  unittests/DOSGuard.cpp)
   include(CMake/deps/gtest.cmake)
+
+  # if CODE_COVERAGE enable, add clio_test-ccov
+  if(CODE_COVERAGE)
+    include(CMake/coverage.cmake)
+    add_converage(${TEST_TARGET})
+  endif()
 endif()
 
 include(CMake/install/install.cmake)
