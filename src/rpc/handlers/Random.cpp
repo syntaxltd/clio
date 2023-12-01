@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 /*
     This file is part of clio: https://github.com/XRPLF/clio
-    Copyright (c) 2022, the clio developers.
+    Copyright (c) 2023, the clio developers.
 
     Permission to use, copy, modify, and distribute this software for any
     purpose with or without fee is hereby granted, provided that the above
@@ -17,24 +17,36 @@
 */
 //==============================================================================
 
-#include <cassert>
+#include "rpc/handlers/Random.h"
 
+#include "rpc/JS.h"
+#include "rpc/common/Types.h"
+
+#include <boost/json/conversion.hpp>
+#include <boost/json/value.hpp>
+#include <ripple/basics/base_uint.h>
+#include <ripple/basics/strHex.h>
 #include <ripple/beast/utility/rngfill.h>
 #include <ripple/crypto/csprng.h>
+#include <ripple/protocol/jss.h>
 
-#include <rpc/RPCHelpers.h>
+namespace rpc {
 
-namespace RPC {
-
-Result
-doRandom(Context const& context)
+RandomHandler::Result
+RandomHandler::process([[maybe_unused]] Context const& ctx)
 {
     ripple::uint256 rand;
+    beast::rngfill(rand.begin(), ripple::uint256::size(), ripple::crypto_prng());
 
-    beast::rngfill(rand.begin(), rand.size(), ripple::crypto_prng());
-    boost::json::object result;
-    result[JS(random)] = ripple::strHex(rand);
-    return result;
+    return Output{ripple::strHex(rand)};
 }
 
-}  // namespace RPC
+void
+tag_invoke(boost::json::value_from_tag, boost::json::value& jv, RandomHandler::Output const& output)
+{
+    jv = {
+        {JS(random), output.random},
+    };
+}
+
+}  // namespace rpc

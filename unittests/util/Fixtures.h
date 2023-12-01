@@ -19,26 +19,28 @@
 
 #pragma once
 
-#include <ios>
+#include "util/MockBackend.h"
+#include "util/MockCounters.h"
+#include "util/MockETLService.h"
+#include "util/MockLoadBalancer.h"
+#include "util/MockSubscriptionManager.h"
+#include "util/log/Logger.h"
+
+#include <boost/asio.hpp>
+#include <gtest/gtest.h>
+
 #include <mutex>
 #include <thread>
 
-#include <boost/asio.hpp>
-
-#include <gtest/gtest.h>
-#include <log/Logger.h>
-
 /**
- * @brief Fixture with LogService support.
+ * @brief Fixture with util::Logger support.
  */
-class LoggerFixture : public ::testing::Test
-{
+class LoggerFixture : virtual public ::testing::Test {
     /**
      * @brief A simple string buffer that can be used to mock std::cout for
      * console logging.
      */
-    class FakeBuffer final : public std::stringbuf
-    {
+    class FakeBuffer final : public std::stringbuf {
     public:
         std::string
         getStrAndReset()
@@ -53,30 +55,25 @@ class LoggerFixture : public ::testing::Test
     std::ostream stream_ = std::ostream{&buffer_};
 
 protected:
-    // Simulates the `LogService::init(config)` call
+    // Simulates the `util::Logger::init(config)` call
     void
     SetUp() override
     {
         static std::once_flag once_;
         std::call_once(once_, [] {
             boost::log::add_common_attributes();
-            boost::log::register_simple_formatter_factory<clio::Severity, char>(
-                "Severity");
+            boost::log::register_simple_formatter_factory<util::Severity, char>("Severity");
         });
 
-        namespace src = boost::log::sources;
         namespace keywords = boost::log::keywords;
-        namespace sinks = boost::log::sinks;
         namespace expr = boost::log::expressions;
         auto core = boost::log::core::get();
 
         core->remove_all_sinks();
-        boost::log::add_console_log(
-            stream_, keywords::format = "%Channel%:%Severity% %Message%");
-        auto min_severity = expr::channel_severity_filter(
-            clio::log_channel, clio::log_severity);
-        min_severity["General"] = clio::Severity::DBG;
-        min_severity["Trace"] = clio::Severity::TRC;
+        boost::log::add_console_log(stream_, keywords::format = "%Channel%:%Severity% %Message%");
+        auto min_severity = expr::channel_severity_filter(util::log_channel, util::log_severity);
+        min_severity["General"] = util::Severity::DBG;
+        min_severity["Trace"] = util::Severity::TRC;
         core->set_filter(min_severity);
         core->set_logging_enabled(true);
     }
@@ -96,12 +93,11 @@ protected:
 };
 
 /**
- * @brief Fixture with LogService support but completely disabled logging.
+ * @brief Fixture with util::Logger support but completely disabled logging.
  *
  * This is meant to be used as a base for other fixtures.
  */
-class NoLoggerFixture : public LoggerFixture
-{
+class NoLoggerFixture : virtual public LoggerFixture {
 protected:
     void
     SetUp() override
@@ -116,18 +112,28 @@ protected:
  *
  * This is meant to be used as a base for other fixtures.
  */
-struct AsyncAsioContextTest : public NoLoggerFixture
-{
+struct AsyncAsioContextTest : virtual public NoLoggerFixture {
     AsyncAsioContextTest()
     {
         work.emplace(ctx);  // make sure ctx does not stop on its own
+        runner.emplace([&] { ctx.run(); });
     }
 
-    ~AsyncAsioContextTest()
+    ~AsyncAsioContextTest() override
     {
         work.reset();
+        if (runner->joinable())
+            runner->join();
         ctx.stop();
-        runner.join();
+    }
+
+    void
+    stop()
+    {
+        work.reset();
+        if (runner->joinable())
+            runner->join();
+        ctx.stop();
     }
 
 protected:
@@ -135,7 +141,7 @@ protected:
 
 private:
     std::optional<boost::asio::io_service::work> work;
-    std::thread runner{[this] { ctx.run(); }};
+    std::optional<std::thread> runner;
 };
 
 /**
@@ -145,12 +151,148 @@ private:
  * Use `run_for(duration)` etc. directly on `ctx`.
  * This is meant to be used as a base for other fixtures.
  */
-struct SyncAsioContextTest : public NoLoggerFixture
-{
-    SyncAsioContextTest()
+struct SyncAsioContextTest : virtual public NoLoggerFixture {
+    template <typename F>
+    void
+    runSpawn(F&& f)
     {
+        using namespace boost::asio;
+
+        auto called = false;
+        spawn(ctx, [&, _ = make_work_guard(ctx)](yield_context yield) {
+            f(yield);
+            called = true;
+        });
+
+        ctx.run();
+        ASSERT_TRUE(called);
+        ctx.reset();
     }
 
 protected:
     boost::asio::io_context ctx;
+};
+
+/**
+ * @brief Fixture with a mock backend
+ */
+struct MockBackendTest : virtual public NoLoggerFixture {
+    void
+    SetUp() override
+    {
+        NoLoggerFixture::SetUp();
+        util::Config cfg;
+        mockBackendPtr = std::make_shared<MockBackend>(cfg);
+    }
+    void
+    TearDown() override
+    {
+        mockBackendPtr.reset();
+    }
+
+protected:
+    std::shared_ptr<BackendInterface> mockBackendPtr;
+};
+
+/**
+ * @brief Fixture with a mock subscription manager
+ */
+struct MockSubscriptionManagerTest : virtual public NoLoggerFixture {
+    void
+    SetUp() override
+    {
+        NoLoggerFixture::SetUp();
+        mockSubscriptionManagerPtr = std::make_shared<MockSubscriptionManager>();
+    }
+    void
+    TearDown() override
+    {
+        mockSubscriptionManagerPtr.reset();
+    }
+
+protected:
+    std::shared_ptr<MockSubscriptionManager> mockSubscriptionManagerPtr;
+};
+
+/**
+ * @brief Fixture with a mock etl balancer
+ */
+struct MockLoadBalancerTest : virtual public NoLoggerFixture {
+    void
+    SetUp() override
+    {
+        NoLoggerFixture::SetUp();
+        mockLoadBalancerPtr = std::make_shared<MockLoadBalancer>();
+    }
+    void
+    TearDown() override
+    {
+        mockLoadBalancerPtr.reset();
+    }
+
+protected:
+    std::shared_ptr<MockLoadBalancer> mockLoadBalancerPtr;
+};
+
+/**
+ * @brief Fixture with a mock subscription manager
+ */
+struct MockETLServiceTest : virtual public NoLoggerFixture {
+    void
+    SetUp() override
+    {
+        NoLoggerFixture::SetUp();
+        mockETLServicePtr = std::make_shared<MockETLService>();
+    }
+    void
+    TearDown() override
+    {
+        mockETLServicePtr.reset();
+    }
+
+protected:
+    std::shared_ptr<MockETLService> mockETLServicePtr;
+};
+
+/**
+ * @brief Fixture with mock counters
+ */
+struct MockCountersTest : virtual public NoLoggerFixture {
+    void
+    SetUp() override
+    {
+        NoLoggerFixture::SetUp();
+        mockCountersPtr = std::make_shared<MockCounters>();
+    }
+    void
+    TearDown() override
+    {
+        mockCountersPtr.reset();
+    }
+
+protected:
+    std::shared_ptr<MockCounters> mockCountersPtr;
+};
+
+/**
+ * @brief Fixture with an mock backend and an embedded boost::asio context
+ * Handler unittest base class
+ */
+struct HandlerBaseTest : public MockBackendTest, public SyncAsioContextTest, public MockETLServiceTest {
+protected:
+    void
+    SetUp() override
+    {
+        MockBackendTest::SetUp();
+        SyncAsioContextTest::SetUp();
+        MockETLServiceTest::SetUp();
+    }
+
+    void
+    TearDown() override
+    {
+        MockETLServiceTest::TearDown();
+        SyncAsioContextTest::TearDown();
+        MockBackendTest::TearDown();
+    }
 };

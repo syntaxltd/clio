@@ -19,55 +19,141 @@
 
 #pragma once
 
+#include "rpc/WorkQueue.h"
+#include "util/prometheus/Prometheus.h"
+
 #include <boost/json.hpp>
+
 #include <chrono>
-#include <cstdint>
-#include <functional>
-#include <rpc/WorkQueue.h>
-#include <shared_mutex>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 
-namespace RPC {
+namespace rpc {
 
-class Counters
-{
-private:
-    struct MethodInfo
-    {
-        MethodInfo() = default;
+/**
+ * @brief Holds information about successful, failed, forwarded, etc. RPC handler calls.
+ */
+class Counters {
+    using CounterType = std::reference_wrapper<util::prometheus::CounterInt>;
+    /**
+     * @brief All counters the system keeps track of for each RPC method.
+     */
+    struct MethodInfo {
+        MethodInfo(std::string const& method);
 
-        std::atomic_uint64_t started{0};
-        std::atomic_uint64_t finished{0};
-        std::atomic_uint64_t errored{0};
-        std::atomic_uint64_t forwarded{0};
-        std::atomic_uint64_t duration{0};
+        CounterType started;
+        CounterType finished;
+        CounterType failed;
+        CounterType errored;
+        CounterType forwarded;
+        CounterType failedForward;
+        CounterType duration;
     };
 
-    void
-    initializeCounter(std::string const& method);
+    MethodInfo&
+    getMethodInfo(std::string const& method);
 
-    std::shared_mutex mutex_;
+    mutable std::mutex mutex_;
     std::unordered_map<std::string, MethodInfo> methodInfo_;
 
-    std::reference_wrapper<const WorkQueue> workQueue_;
+    // counters that don't carry RPC method information
+    CounterType tooBusyCounter_;
+    CounterType notReadyCounter_;
+    CounterType badSyntaxCounter_;
+    CounterType unknownCommandCounter_;
+    CounterType internalErrorCounter_;
+
+    std::reference_wrapper<WorkQueue const> workQueue_;
+    std::chrono::time_point<std::chrono::system_clock> startupTime_;
 
 public:
-    Counters(WorkQueue const& wq) : workQueue_(std::cref(wq)){};
+    /**
+     * @brief Creates a new counters instance that operates on the given WorkQueue.
+     *
+     * @param wq The work queue to operate on
+     */
+    Counters(WorkQueue const& wq);
 
+    /**
+     * @brief A factory function that creates a new counters instance.
+     *
+     * @param wq The work queue to operate on
+     * @return The new instance
+     */
+    static Counters
+    make_Counters(WorkQueue const& wq)
+    {
+        return Counters{wq};
+    }
+
+    /**
+     * @brief Increments the failed count for a particular RPC method.
+     *
+     * @param method The method to increment the count for
+     */
+    void
+    rpcFailed(std::string const& method);
+
+    /**
+     * @brief Increments the errored count for a particular RPC method.
+     *
+     * @param method The method to increment the count for
+     */
     void
     rpcErrored(std::string const& method);
 
+    /**
+     * @brief Increments the completed count for a particular RPC method.
+     *
+     * @param method The method to increment the count for
+     */
     void
-    rpcComplete(
-        std::string const& method,
-        std::chrono::microseconds const& rpcDuration);
+    rpcComplete(std::string const& method, std::chrono::microseconds const& rpcDuration);
 
+    /**
+     * @brief Increments the forwarded count for a particular RPC method.
+     *
+     * @param method The method to increment the count for
+     */
     void
     rpcForwarded(std::string const& method);
 
+    /**
+     * @brief Increments the failed to forward count for a particular RPC method.
+     *
+     * @param method The method to increment the count for
+     */
+    void
+    rpcFailedToForward(std::string const& method);
+
+    /** @brief Increments the global too busy counter. */
+    void
+    onTooBusy();
+
+    /** @brief Increments the global not ready counter. */
+    void
+    onNotReady();
+
+    /** @brief Increments the global bad syntax counter. */
+    void
+    onBadSyntax();
+
+    /** @brief Increments the global unknown command/method counter. */
+    void
+    onUnknownCommand();
+
+    /** @brief Increments the global internal error counter. */
+    void
+    onInternalError();
+
+    /** @return Uptime of this instance in seconds. */
+    std::chrono::seconds
+    uptime() const;
+
+    /** @return A JSON report with current state of all counters for every method. */
     boost::json::object
-    report();
+    report() const;
 };
 
-}  // namespace RPC
+}  // namespace rpc

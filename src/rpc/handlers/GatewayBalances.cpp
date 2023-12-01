@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 /*
     This file is part of clio: https://github.com/XRPLF/clio
-    Copyright (c) 2022, the clio developers.
+    Copyright (c) 2023, the clio developers.
 
     Permission to use, copy, modify, and distribute this software for any
     purpose with or without fee is hereby granted, provided that the above
@@ -17,206 +17,229 @@
 */
 //==============================================================================
 
-#include <backend/BackendInterface.h>
-#include <rpc/RPCHelpers.h>
+#include "rpc/handlers/GatewayBalances.h"
 
-namespace RPC {
+#include "rpc/Errors.h"
+#include "rpc/JS.h"
+#include "rpc/RPCHelpers.h"
+#include "rpc/common/Types.h"
 
-Result
-doGatewayBalances(Context const& context)
+#include <boost/json/array.hpp>
+#include <boost/json/conversion.hpp>
+#include <boost/json/object.hpp>
+#include <boost/json/value.hpp>
+#include <ripple/basics/strHex.h>
+#include <ripple/beast/utility/Zero.h>
+#include <ripple/protocol/AccountID.h>
+#include <ripple/protocol/ErrorCodes.h>
+#include <ripple/protocol/Indexes.h>
+#include <ripple/protocol/LedgerFormats.h>
+#include <ripple/protocol/LedgerHeader.h>
+#include <ripple/protocol/SField.h>
+#include <ripple/protocol/STAmount.h>
+#include <ripple/protocol/STLedgerEntry.h>
+#include <ripple/protocol/UintTypes.h>
+#include <ripple/protocol/jss.h>
+
+#include <algorithm>
+#include <cstdint>
+#include <iterator>
+#include <limits>
+#include <map>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <variant>
+#include <vector>
+
+namespace rpc {
+
+GatewayBalancesHandler::Result
+GatewayBalancesHandler::process(GatewayBalancesHandler::Input input, Context const& ctx) const
 {
-    auto request = context.params;
-    boost::json::object response = {};
+    // check ledger
+    auto const range = sharedPtrBackend_->fetchLedgerRange();
+    auto const lgrInfoOrStatus = getLedgerInfoFromHashOrSeq(
+        *sharedPtrBackend_, ctx.yield, input.ledgerHash, input.ledgerIndex, range->maxSequence
+    );
 
-    ripple::AccountID accountID;
-    if (auto const status = getAccount(request, accountID); status)
-        return status;
+    if (auto const status = std::get_if<Status>(&lgrInfoOrStatus))
+        return Error{*status};
 
-    auto v = ledgerInfoFromRequest(context);
-    if (auto status = std::get_if<Status>(&v))
-        return *status;
+    // check account
+    auto const lgrInfo = std::get<ripple::LedgerHeader>(lgrInfoOrStatus);
+    auto const accountID = accountFromStringStrict(input.account);
+    auto const accountLedgerObject =
+        sharedPtrBackend_->fetchLedgerObject(ripple::keylet::account(*accountID).key, lgrInfo.seq, ctx.yield);
 
-    auto lgrInfo = std::get<ripple::LedgerInfo>(v);
+    if (!accountLedgerObject)
+        return Error{Status{RippledError::rpcACT_NOT_FOUND, "accountNotFound"}};
 
-    std::map<ripple::Currency, ripple::STAmount> sums;
-    std::map<ripple::AccountID, std::vector<ripple::STAmount>> hotBalances;
-    std::map<ripple::AccountID, std::vector<ripple::STAmount>> assets;
-    std::map<ripple::AccountID, std::vector<ripple::STAmount>> frozenBalances;
-    std::set<ripple::AccountID> hotWallets;
+    auto output = GatewayBalancesHandler::Output{};
 
-    if (request.contains(JS(hotwallet)))
-    {
-        auto getAccountID =
-            [](auto const& j) -> std::optional<ripple::AccountID> {
-            if (j.is_string())
-            {
-                auto const pk = ripple::parseBase58<ripple::PublicKey>(
-                    ripple::TokenType::AccountPublic, j.as_string().c_str());
-                if (pk)
-                {
-                    return ripple::calcAccountID(*pk);
-                }
-
-                return ripple::parseBase58<ripple::AccountID>(
-                    j.as_string().c_str());
-            }
-            return {};
-        };
-
-        auto const& hw = request.at(JS(hotwallet));
-        bool valid = true;
-
-        // null is treated as a valid 0-sized array of hotwallet
-        if (hw.is_array())
-        {
-            auto const& arr = hw.as_array();
-            for (unsigned i = 0; i < arr.size(); ++i)
-            {
-                if (auto id = getAccountID(arr[i]))
-                    hotWallets.insert(*id);
-                else
-                    valid = false;
-            }
-        }
-        else if (hw.is_string())
-        {
-            if (auto id = getAccountID(hw))
-                hotWallets.insert(*id);
-            else
-                valid = false;
-        }
-        else
-        {
-            valid = false;
-        }
-
-        if (!valid)
-        {
-            response[JS(error)] = "invalidHotWallet";
-            return response;
-        }
-    }
-
-    // Traverse the cold wallet's trust lines
-    auto const addToResponse = [&](ripple::SLE&& sle) {
-        if (sle.getType() == ripple::ltRIPPLE_STATE)
-        {
+    auto const addToResponse = [&](ripple::SLE const sle) {
+        if (sle.getType() == ripple::ltRIPPLE_STATE) {
             ripple::STAmount balance = sle.getFieldAmount(ripple::sfBalance);
+            auto const lowLimit = sle.getFieldAmount(ripple::sfLowLimit);
+            auto const highLimit = sle.getFieldAmount(ripple::sfHighLimit);
+            auto const lowID = lowLimit.getIssuer();
+            auto const highID = highLimit.getIssuer();
+            auto const viewLowest = (lowLimit.getIssuer() == accountID);
+            auto const flags = sle.getFieldU32(ripple::sfFlags);
+            auto const freeze = flags & (viewLowest ? ripple::lsfLowFreeze : ripple::lsfHighFreeze);
 
-            auto lowLimit = sle.getFieldAmount(ripple::sfLowLimit);
-            auto highLimit = sle.getFieldAmount(ripple::sfHighLimit);
-            auto lowID = lowLimit.getIssuer();
-            auto highID = highLimit.getIssuer();
-            bool viewLowest = (lowLimit.getIssuer() == accountID);
-            auto lineLimit = viewLowest ? lowLimit : highLimit;
-            auto lineLimitPeer = !viewLowest ? lowLimit : highLimit;
-            auto flags = sle.getFieldU32(ripple::sfFlags);
-            auto freeze = flags &
-                (viewLowest ? ripple::lsfLowFreeze : ripple::lsfHighFreeze);
             if (!viewLowest)
                 balance.negate();
 
-            int balSign = balance.signum();
+            auto const balSign = balance.signum();
             if (balSign == 0)
                 return true;
 
             auto const& peer = !viewLowest ? lowID : highID;
 
             // Here, a negative balance means the cold wallet owes (normal)
-            // A positive balance means the cold wallet has an asset
-            // (unusual)
+            // A positive balance means the cold wallet has an asset (unusual)
 
-            if (hotWallets.count(peer) > 0)
-            {
+            if (input.hotWallets.contains(peer)) {
                 // This is a specified hot wallet
-                hotBalances[peer].push_back(-balance);
-            }
-            else if (balSign > 0)
-            {
+                output.hotBalances[peer].push_back(-balance);
+            } else if (balSign > 0) {
                 // This is a gateway asset
-                assets[peer].push_back(balance);
-            }
-            else if (freeze)
-            {
+                output.assets[peer].push_back(balance);
+            } else if (freeze != 0u) {
                 // An obligation the gateway has frozen
-                frozenBalances[peer].push_back(-balance);
-            }
-            else
-            {
+                output.frozenBalances[peer].push_back(-balance);
+            } else {
                 // normal negative balance, obligation to customer
-                auto& bal = sums[balance.getCurrency()];
-                if (bal == beast::zero)
-                {
+                auto& bal = output.sums[balance.getCurrency()];
+                if (bal == beast::zero) {
                     // This is needed to set the currency code correctly
                     bal = -balance;
+                } else {
+                    try {
+                        bal -= balance;
+                    } catch (std::runtime_error const& e) {
+                        bal = ripple::STAmount(bal.issue(), ripple::STAmount::cMaxValue, ripple::STAmount::cMaxOffset);
+                    }
                 }
-                else
-                    bal -= balance;
             }
         }
+
         return true;
     };
 
-    auto result = traverseOwnedNodes(
-        *context.backend,
-        accountID,
+    // traverse all owned nodes, limit->max, marker->empty
+    auto const ret = traverseOwnedNodes(
+        *sharedPtrBackend_,
+        *accountID,
         lgrInfo.seq,
         std::numeric_limits<std::uint32_t>::max(),
         {},
-        context.yield,
-        addToResponse);
-    if (auto status = std::get_if<RPC::Status>(&result))
-        return *status;
+        ctx.yield,
+        addToResponse
+    );
 
-    if (!sums.empty())
-    {
-        boost::json::object obj;
-        for (auto const& [k, v] : sums)
-        {
-            obj[ripple::to_string(k)] = v.getText();
-        }
-        response[JS(obligations)] = std::move(obj);
+    if (auto status = std::get_if<Status>(&ret))
+        return Error{*status};
+
+    auto inHotbalances = [&](auto const& hw) { return output.hotBalances.contains(hw); };
+    if (not std::all_of(input.hotWallets.begin(), input.hotWallets.end(), inHotbalances))
+        return Error{Status{ClioError::rpcINVALID_HOT_WALLET}};
+
+    output.accountID = input.account;
+    output.ledgerHash = ripple::strHex(lgrInfo.hash);
+    output.ledgerIndex = lgrInfo.seq;
+
+    return output;
+}
+
+void
+tag_invoke(boost::json::value_from_tag, boost::json::value& jv, GatewayBalancesHandler::Output const& output)
+{
+    boost::json::object obj;
+    if (!output.sums.empty()) {
+        boost::json::object obligations;
+        for (auto const& [k, v] : output.sums)
+            obligations[ripple::to_string(k)] = v.getText();
+
+        obj[JS(obligations)] = std::move(obligations);
     }
 
-    auto toJson =
-        [](std::map<ripple::AccountID, std::vector<ripple::STAmount>> const&
-               balances) {
-            boost::json::object obj;
-            if (!balances.empty())
-            {
-                for (auto const& [accId, accBalances] : balances)
-                {
-                    boost::json::array arr;
-                    for (auto const& balance : accBalances)
-                    {
-                        boost::json::object entry;
-                        entry[JS(currency)] =
-                            ripple::to_string(balance.issue().currency);
-                        entry[JS(value)] = balance.getText();
-                        arr.push_back(std::move(entry));
-                    }
-                    obj[ripple::to_string(accId)] = std::move(arr);
+    auto const toJson = [](std::map<ripple::AccountID, std::vector<ripple::STAmount>> const& balances) {
+        boost::json::object balancesObj;
+
+        if (not balances.empty()) {
+            for (auto const& [accId, accBalances] : balances) {
+                boost::json::array arr;
+                for (auto const& balance : accBalances) {
+                    boost::json::object entry;
+                    entry[JS(currency)] = ripple::to_string(balance.issue().currency);
+                    entry[JS(value)] = balance.getText();
+                    arr.push_back(std::move(entry));
                 }
+
+                balancesObj[ripple::to_string(accId)] = std::move(arr);
             }
-            return obj;
-        };
+        }
 
-    auto containsHotWallet = [&](auto const& hw) {
-        return hotBalances.contains(hw);
+        return balancesObj;
     };
-    if (not std::all_of(
-            hotWallets.begin(), hotWallets.end(), containsHotWallet))
-        return Status{RippledError::rpcINVALID_PARAMS, "invalidHotWallet"};
 
-    if (auto balances = toJson(hotBalances); balances.size())
-        response[JS(balances)] = balances;
-    if (auto balances = toJson(frozenBalances); balances.size())
-        response[JS(frozen_balances)] = balances;
-    if (auto balances = toJson(assets); assets.size())
-        response[JS(assets)] = toJson(assets);
-    response[JS(account)] = request.at(JS(account));
-    response[JS(ledger_index)] = lgrInfo.seq;
-    response[JS(ledger_hash)] = ripple::strHex(lgrInfo.hash);
-    return response;
+    if (auto balances = toJson(output.hotBalances); !balances.empty())
+        obj[JS(balances)] = balances;
+
+    // we don't have frozen_balances field in the
+    // document:https://xrpl.org/gateway_balances.html#gateway_balances
+    if (auto balances = toJson(output.frozenBalances); !balances.empty())
+        obj[JS(frozen_balances)] = balances;
+
+    if (auto balances = toJson(output.assets); !balances.empty())
+        obj[JS(assets)] = balances;
+
+    obj[JS(account)] = output.accountID;
+    obj[JS(ledger_index)] = output.ledgerIndex;
+    obj[JS(ledger_hash)] = output.ledgerHash;
+
+    if (output.overflow)
+        obj["overflow"] = true;
+
+    jv = std::move(obj);
 }
-}  // namespace RPC
+
+GatewayBalancesHandler::Input
+tag_invoke(boost::json::value_to_tag<GatewayBalancesHandler::Input>, boost::json::value const& jv)
+{
+    auto input = GatewayBalancesHandler::Input{};
+    auto const& jsonObject = jv.as_object();
+
+    input.account = jv.at(JS(account)).as_string().c_str();
+
+    if (jsonObject.contains(JS(ledger_hash)))
+        input.ledgerHash = jv.at(JS(ledger_hash)).as_string().c_str();
+
+    if (jsonObject.contains(JS(ledger_index))) {
+        if (!jsonObject.at(JS(ledger_index)).is_string()) {
+            input.ledgerIndex = jv.at(JS(ledger_index)).as_int64();
+        } else if (jsonObject.at(JS(ledger_index)).as_string() != "validated") {
+            input.ledgerIndex = std::stoi(jv.at(JS(ledger_index)).as_string().c_str());
+        }
+    }
+
+    if (jsonObject.contains(JS(hotwallet))) {
+        if (jsonObject.at(JS(hotwallet)).is_string()) {
+            input.hotWallets.insert(*accountFromStringStrict(jv.at(JS(hotwallet)).as_string().c_str()));
+        } else {
+            auto const& hotWallets = jv.at(JS(hotwallet)).as_array();
+            std::transform(
+                hotWallets.begin(),
+                hotWallets.end(),
+                std::inserter(input.hotWallets, input.hotWallets.begin()),
+                [](auto const& hotWallet) { return *accountFromStringStrict(hotWallet.as_string().c_str()); }
+            );
+        }
+    }
+
+    return input;
+}
+
+}  // namespace rpc

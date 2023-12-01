@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 /*
     This file is part of clio: https://github.com/XRPLF/clio
-    Copyright (c) 2022, the clio developers.
+    Copyright (c) 2023, the clio developers.
 
     Permission to use, copy, modify, and distribute this software for any
     purpose with or without fee is hereby granted, provided that the above
@@ -17,167 +17,212 @@
 */
 //==============================================================================
 
-#include <backend/BackendInterface.h>
-#include <rpc/RPCHelpers.h>
+#include "rpc/handlers/Ledger.h"
 
-namespace RPC {
+#include "data/Types.h"
+#include "rpc/Errors.h"
+#include "rpc/JS.h"
+#include "rpc/RPCHelpers.h"
+#include "rpc/common/Types.h"
 
-Result
-doLedger(Context const& context)
+#include <boost/json/array.hpp>
+#include <boost/json/conversion.hpp>
+#include <boost/json/kind.hpp>
+#include <boost/json/object.hpp>
+#include <boost/json/string.hpp>
+#include <boost/json/value.hpp>
+#include <ripple/basics/chrono.h>
+#include <ripple/basics/strHex.h>
+#include <ripple/protocol/LedgerHeader.h>
+#include <ripple/protocol/SField.h>
+#include <ripple/protocol/STLedgerEntry.h>
+#include <ripple/protocol/Serializer.h>
+#include <ripple/protocol/TxFormats.h>
+#include <ripple/protocol/jss.h>
+
+#include <algorithm>
+#include <iterator>
+#include <string>
+#include <utility>
+#include <variant>
+
+namespace rpc {
+LedgerHandler::Result
+LedgerHandler::process(LedgerHandler::Input input, Context const& ctx) const
 {
-    auto params = context.params;
-    boost::json::object response = {};
+    auto const range = sharedPtrBackend_->fetchLedgerRange();
+    auto const lgrInfoOrStatus = getLedgerInfoFromHashOrSeq(
+        *sharedPtrBackend_, ctx.yield, input.ledgerHash, input.ledgerIndex, range->maxSequence
+    );
 
-    bool binary = false;
-    if (params.contains(JS(binary)))
-    {
-        if (!params.at(JS(binary)).is_bool())
-            return Status{RippledError::rpcINVALID_PARAMS, "binaryFlagNotBool"};
+    if (auto const status = std::get_if<Status>(&lgrInfoOrStatus))
+        return Error{*status};
 
-        binary = params.at(JS(binary)).as_bool();
-    }
+    auto const lgrInfo = std::get<ripple::LedgerHeader>(lgrInfoOrStatus);
+    Output output;
 
-    bool transactions = false;
-    if (params.contains(JS(transactions)))
-    {
-        if (!params.at(JS(transactions)).is_bool())
-            return Status{
-                RippledError::rpcINVALID_PARAMS, "transactionsFlagNotBool"};
+    output.header = toJson(lgrInfo, input.binary);
 
-        transactions = params.at(JS(transactions)).as_bool();
-    }
+    if (input.transactions) {
+        output.header[JS(transactions)] = boost::json::value(boost::json::array_kind);
+        boost::json::array& jsonTxs = output.header.at(JS(transactions)).as_array();
 
-    bool expand = false;
-    if (params.contains(JS(expand)))
-    {
-        if (!params.at(JS(expand)).is_bool())
-            return Status{RippledError::rpcINVALID_PARAMS, "expandFlagNotBool"};
+        if (input.expand) {
+            auto txns = sharedPtrBackend_->fetchAllTransactionsInLedger(lgrInfo.seq, ctx.yield);
 
-        expand = params.at(JS(expand)).as_bool();
-    }
+            auto const expandTxJsonV1 = [&](data::TransactionAndMetadata const& tx) {
+                if (!input.binary) {
+                    auto [txn, meta] = toExpandedJson(tx, ctx.apiVersion);
+                    txn[JS(metaData)] = std::move(meta);
+                    return txn;
+                }
+                return toJsonWithBinaryTx(tx, ctx.apiVersion);
+            };
 
-    bool diff = false;
-    if (params.contains("diff"))
-    {
-        if (!params.at("diff").is_bool())
-            return Status{RippledError::rpcINVALID_PARAMS, "diffFlagNotBool"};
+            auto const isoTimeStr = ripple::to_string_iso(lgrInfo.closeTime);
 
-        diff = params.at("diff").as_bool();
-    }
+            auto const expandTxJsonV2 = [&](data::TransactionAndMetadata const& tx) {
+                auto [txn, meta] = toExpandedJson(tx, ctx.apiVersion);
+                if (!input.binary) {
+                    boost::json::object entry;
+                    entry[JS(validated)] = true;
+                    // same with rippled, ledger_index is a string here
+                    entry[JS(ledger_index)] = std::to_string(lgrInfo.seq);
+                    entry[JS(close_time_iso)] = isoTimeStr;
+                    entry[JS(ledger_hash)] = ripple::strHex(lgrInfo.hash);
+                    if (txn.contains(JS(hash))) {
+                        entry[JS(hash)] = txn.at(JS(hash));
+                        txn.erase(JS(hash));
+                    }
+                    entry[JS(tx_json)] = std::move(txn);
+                    entry[JS(meta)] = std::move(meta);
+                    return entry;
+                }
 
-    if (params.contains(JS(full)))
-        return Status{RippledError::rpcNOT_SUPPORTED};
-
-    if (params.contains(JS(accounts)))
-        return Status{RippledError::rpcNOT_SUPPORTED};
-
-    auto v = ledgerInfoFromRequest(context);
-    if (auto status = std::get_if<Status>(&v))
-        return *status;
-
-    auto lgrInfo = std::get<ripple::LedgerInfo>(v);
-
-    boost::json::object header;
-    if (binary)
-    {
-        header[JS(ledger_data)] = ripple::strHex(ledgerInfoToBlob(lgrInfo));
-    }
-    else
-    {
-        header[JS(accepted)] = true;
-        header[JS(account_hash)] = ripple::strHex(lgrInfo.accountHash);
-        header[JS(close_flags)] = lgrInfo.closeFlags;
-        header[JS(close_time)] = lgrInfo.closeTime.time_since_epoch().count();
-        header[JS(close_time_human)] = ripple::to_string(lgrInfo.closeTime);
-        header[JS(close_time_resolution)] = lgrInfo.closeTimeResolution.count();
-        header[JS(closed)] = true;
-        header[JS(hash)] = ripple::strHex(lgrInfo.hash);
-        header[JS(ledger_hash)] = ripple::strHex(lgrInfo.hash);
-        header[JS(ledger_index)] = std::to_string(lgrInfo.seq);
-        header[JS(parent_close_time)] =
-            lgrInfo.parentCloseTime.time_since_epoch().count();
-        header[JS(parent_hash)] = ripple::strHex(lgrInfo.parentHash);
-        header[JS(seqNum)] = std::to_string(lgrInfo.seq);
-        header[JS(totalCoins)] = ripple::to_string(lgrInfo.drops);
-        header[JS(total_coins)] = ripple::to_string(lgrInfo.drops);
-        header[JS(transaction_hash)] = ripple::strHex(lgrInfo.txHash);
-    }
-    header[JS(closed)] = true;
-
-    if (transactions)
-    {
-        header[JS(transactions)] = boost::json::value(boost::json::array_kind);
-        boost::json::array& jsonTxs = header.at(JS(transactions)).as_array();
-        if (expand)
-        {
-            auto txns = context.backend->fetchAllTransactionsInLedger(
-                lgrInfo.seq, context.yield);
+                auto entry = toJsonWithBinaryTx(tx, ctx.apiVersion);
+                if (txn.contains(JS(hash)))
+                    entry[JS(hash)] = txn.at(JS(hash));
+                return entry;
+            };
 
             std::transform(
                 std::move_iterator(txns.begin()),
                 std::move_iterator(txns.end()),
                 std::back_inserter(jsonTxs),
-                [binary](auto obj) {
-                    boost::json::object entry;
-                    if (!binary)
-                    {
-                        auto [txn, meta] = toExpandedJson(obj);
-                        entry = txn;
-                        entry[JS(metaData)] = meta;
+                [&](auto obj) {
+                    boost::json::object entry = ctx.apiVersion < 2u ? expandTxJsonV1(obj) : expandTxJsonV2(obj);
+
+                    if (input.ownerFunds) {
+                        // check the type of tx
+                        auto const [tx, meta] = rpc::deserializeTxPlusMeta(obj);
+                        if (tx and tx->isFieldPresent(ripple::sfTransactionType) and
+                            tx->getTxnType() == ripple::ttOFFER_CREATE) {
+                            auto const account = tx->getAccountID(ripple::sfAccount);
+                            auto const amount = tx->getFieldAmount(ripple::sfTakerGets);
+
+                            // If the offer create is not self funded then add the
+                            // owner balance
+                            if (account != amount.getIssuer()) {
+                                auto const ownerFunds = accountHolds(
+                                    *sharedPtrBackend_,
+                                    lgrInfo.seq,
+                                    account,
+                                    amount.getCurrency(),
+                                    amount.getIssuer(),
+                                    false,  // fhIGNORE_FREEZE from rippled
+                                    ctx.yield
+                                );
+                                entry[JS(owner_funds)] = ownerFunds.getText();
+                            }
+                        }
                     }
-                    else
-                    {
-                        entry[JS(tx_blob)] = ripple::strHex(obj.transaction);
-                        entry[JS(meta)] = ripple::strHex(obj.metadata);
-                    }
-                    // entry[JS(ledger_index)] = obj.ledgerSequence;
                     return entry;
-                });
-        }
-        else
-        {
-            auto hashes = context.backend->fetchAllTransactionHashesInLedger(
-                lgrInfo.seq, context.yield);
+                }
+            );
+        } else {
+            auto hashes = sharedPtrBackend_->fetchAllTransactionHashesInLedger(lgrInfo.seq, ctx.yield);
             std::transform(
                 std::move_iterator(hashes.begin()),
                 std::move_iterator(hashes.end()),
                 std::back_inserter(jsonTxs),
-                [](auto hash) {
-                    boost::json::object entry;
-                    return boost::json::string(ripple::strHex(hash));
-                });
+                [](auto hash) { return boost::json::string(ripple::strHex(hash)); }
+            );
         }
     }
 
-    if (diff)
-    {
-        header["diff"] = boost::json::value(boost::json::array_kind);
-        boost::json::array& jsonDiff = header.at("diff").as_array();
-        auto diff =
-            context.backend->fetchLedgerDiff(lgrInfo.seq, context.yield);
-        for (auto const& obj : diff)
-        {
+    if (input.diff) {
+        output.header["diff"] = boost::json::value(boost::json::array_kind);
+
+        boost::json::array& jsonDiff = output.header.at("diff").as_array();
+        auto diff = sharedPtrBackend_->fetchLedgerDiff(lgrInfo.seq, ctx.yield);
+
+        for (auto const& obj : diff) {
             boost::json::object entry;
             entry["object_id"] = ripple::strHex(obj.key);
-            if (binary)
+
+            if (input.binary) {
                 entry["object"] = ripple::strHex(obj.blob);
-            else if (obj.blob.size())
-            {
-                ripple::STLedgerEntry sle{
-                    ripple::SerialIter{obj.blob.data(), obj.blob.size()},
-                    obj.key};
+            } else if (!obj.blob.empty()) {
+                ripple::STLedgerEntry const sle{ripple::SerialIter{obj.blob.data(), obj.blob.size()}, obj.key};
                 entry["object"] = toJson(sle);
-            }
-            else
+            } else {
                 entry["object"] = "";
+            }
+
             jsonDiff.push_back(std::move(entry));
         }
     }
 
-    response[JS(ledger)] = header;
-    response[JS(ledger_hash)] = ripple::strHex(lgrInfo.hash);
-    response[JS(ledger_index)] = lgrInfo.seq;
-    return response;
+    output.ledgerHash = ripple::strHex(lgrInfo.hash);
+    output.ledgerIndex = lgrInfo.seq;
+
+    return output;
 }
 
-}  // namespace RPC
+void
+tag_invoke(boost::json::value_from_tag, boost::json::value& jv, LedgerHandler::Output const& output)
+{
+    jv = boost::json::object{
+        {JS(ledger_hash), output.ledgerHash},
+        {JS(ledger_index), output.ledgerIndex},
+        {JS(validated), output.validated},
+        {JS(ledger), output.header},
+    };
+}
+
+LedgerHandler::Input
+tag_invoke(boost::json::value_to_tag<LedgerHandler::Input>, boost::json::value const& jv)
+{
+    auto input = LedgerHandler::Input{};
+    auto const& jsonObject = jv.as_object();
+
+    if (jsonObject.contains(JS(ledger_hash)))
+        input.ledgerHash = jv.at(JS(ledger_hash)).as_string().c_str();
+
+    if (jsonObject.contains(JS(ledger_index))) {
+        if (!jsonObject.at(JS(ledger_index)).is_string()) {
+            input.ledgerIndex = jv.at(JS(ledger_index)).as_int64();
+        } else if (jsonObject.at(JS(ledger_index)).as_string() != "validated") {
+            input.ledgerIndex = std::stoi(jv.at(JS(ledger_index)).as_string().c_str());
+        }
+    }
+
+    if (jsonObject.contains(JS(transactions)))
+        input.transactions = jv.at(JS(transactions)).as_bool();
+
+    if (jsonObject.contains(JS(binary)))
+        input.binary = jv.at(JS(binary)).as_bool();
+
+    if (jsonObject.contains(JS(expand)))
+        input.expand = jv.at(JS(expand)).as_bool();
+
+    if (jsonObject.contains(JS(owner_funds)))
+        input.ownerFunds = jv.at(JS(owner_funds)).as_bool();
+
+    if (jsonObject.contains("diff"))
+        input.diff = jv.at("diff").as_bool();
+
+    return input;
+}
+
+}  // namespace rpc

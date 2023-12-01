@@ -17,14 +17,46 @@
 */
 //==============================================================================
 
-#include <rpc/WorkQueue.h>
+#include "rpc/WorkQueue.h"
+
+#include "util/prometheus/Label.h"
+#include "util/prometheus/Prometheus.h"
+
+#include <cstdint>
+
+namespace rpc {
 
 WorkQueue::WorkQueue(std::uint32_t numWorkers, uint32_t maxSize)
+    : queued_{PrometheusService::counterInt(
+          "work_queue_queued_total_number",
+          util::prometheus::Labels(),
+          "The total number of tasks queued for processing"
+      )}
+    , durationUs_{PrometheusService::counterInt(
+          "work_queue_cumulitive_tasks_duration_us",
+          util::prometheus::Labels(),
+          "The total number of microseconds tasks were waiting to be executed"
+      )}
+    , curSize_{PrometheusService::gaugeInt(
+          "work_queue_current_size",
+          util::prometheus::Labels(),
+          "The current number of tasks in the queue"
+      )}
+    , ioc_{numWorkers}
 {
     if (maxSize != 0)
         maxSize_ = maxSize;
-    while (--numWorkers)
-    {
-        threads_.emplace_back([this] { ioc_.run(); });
-    }
 }
+
+WorkQueue::~WorkQueue()
+{
+    join();
+}
+
+void
+WorkQueue::join()
+{
+    ioc_.join();
+}
+
+}  // namespace rpc

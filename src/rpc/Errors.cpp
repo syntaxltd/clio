@@ -17,16 +17,28 @@
 */
 //==============================================================================
 
-#include <rpc/Errors.h>
+#include "rpc/Errors.h"
+
+#include "rpc/JS.h"
+
+#include <boost/json/object.hpp>
+#include <ripple/protocol/ErrorCodes.h>
+#include <ripple/protocol/jss.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <iterator>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <variant>
 
 using namespace std;
 
 namespace {
 template <class... Ts>
-struct overloadSet : Ts...
-{
+struct overloadSet : Ts... {
     using Ts::operator()...;
 };
 
@@ -35,7 +47,7 @@ template <class... Ts>
 overloadSet(Ts...) -> overloadSet<Ts...>;
 }  // namespace
 
-namespace RPC {
+namespace rpc {
 
 WarningInfo const&
 getWarningInfo(WarningCode code)
@@ -43,15 +55,14 @@ getWarningInfo(WarningCode code)
     constexpr static WarningInfo infos[]{
         {warnUNKNOWN, "Unknown warning"},
         {warnRPC_CLIO,
-         "This is a clio server. clio only serves validated data. If you "
-         "want to talk to rippled, include 'ledger_index':'current' in your "
-         "request"},
+         "This is a clio server. clio only serves validated data. If you want to talk to rippled, include "
+         "'ledger_index':'current' in your request"},
         {warnRPC_OUTDATED, "This server may be out of date"},
-        {warnRPC_RATE_LIMIT, "You are about to be rate limited"}};
+        {warnRPC_RATE_LIMIT, "You are about to be rate limited"},
+    };
 
     auto matchByCode = [code](auto const& info) { return info.code == code; };
-    if (auto it = find_if(begin(infos), end(infos), matchByCode);
-        it != end(infos))
+    if (auto it = find_if(begin(infos), end(infos), matchByCode); it != end(infos))
         return *it;
 
     throw(out_of_range("Invalid WarningCode"));
@@ -60,10 +71,12 @@ getWarningInfo(WarningCode code)
 boost::json::object
 makeWarning(WarningCode code)
 {
-    boost::json::object json;
+    auto json = boost::json::object{};
     auto const& info = getWarningInfo(code);
+
     json["id"] = code;
     json["message"] = static_cast<string>(info.message);
+
     return json;
 }
 
@@ -71,31 +84,30 @@ ClioErrorInfo const&
 getErrorInfo(ClioError code)
 {
     constexpr static ClioErrorInfo infos[]{
-        {ClioError::rpcMALFORMED_CURRENCY,
-         "malformedCurrency",
-         "Malformed currency."},
-        {ClioError::rpcMALFORMED_REQUEST,
-         "malformedRequest",
-         "Malformed request."},
+        {ClioError::rpcMALFORMED_CURRENCY, "malformedCurrency", "Malformed currency."},
+        {ClioError::rpcMALFORMED_REQUEST, "malformedRequest", "Malformed request."},
         {ClioError::rpcMALFORMED_OWNER, "malformedOwner", "Malformed owner."},
-        {ClioError::rpcMALFORMED_ADDRESS,
-         "malformedAddress",
-         "Malformed address."},
+        {ClioError::rpcMALFORMED_ADDRESS, "malformedAddress", "Malformed address."},
+        {ClioError::rpcINVALID_HOT_WALLET, "invalidHotWallet", "Invalid hot wallet."},
+        {ClioError::rpcUNKNOWN_OPTION, "unknownOption", "Unknown option."},
+        {ClioError::rpcFIELD_NOT_FOUND_TRANSACTION, "fieldNotFoundTransaction", "Missing field."},
+        // special system errors
+        {ClioError::rpcINVALID_API_VERSION, JS(invalid_API_version), "Invalid API version."},
+        {ClioError::rpcCOMMAND_IS_MISSING, JS(missingCommand), "Method is not specified or is not a string."},
+        {ClioError::rpcCOMMAND_NOT_STRING, "commandNotString", "Method is not a string."},
+        {ClioError::rpcCOMMAND_IS_EMPTY, "emptyCommand", "Method is an empty string."},
+        {ClioError::rpcPARAMS_UNPARSEABLE, "paramsUnparseable", "Params must be an array holding exactly one object."},
     };
 
     auto matchByCode = [code](auto const& info) { return info.code == code; };
-    if (auto it = find_if(begin(infos), end(infos), matchByCode);
-        it != end(infos))
+    if (auto it = find_if(begin(infos), end(infos), matchByCode); it != end(infos))
         return *it;
 
     throw(out_of_range("Invalid error code"));
 }
 
 boost::json::object
-makeError(
-    RippledError err,
-    optional<string_view> customError,
-    optional<string_view> customMessage)
+makeError(RippledError err, optional<string_view> customError, optional<string_view> customMessage)
 {
     boost::json::object json;
     auto const& info = ripple::RPC::get_error_info(err);
@@ -105,14 +117,12 @@ makeError(
     json["error_message"] = customMessage.value_or(info.message.c_str()).data();
     json["status"] = "error";
     json["type"] = "response";
+
     return json;
 }
 
 boost::json::object
-makeError(
-    ClioError err,
-    optional<string_view> customError,
-    optional<string_view> customMessage)
+makeError(ClioError err, optional<string_view> customError, optional<string_view> customMessage)
 {
     boost::json::object json;
     auto const& info = getErrorInfo(err);
@@ -122,48 +132,36 @@ makeError(
     json["error_message"] = customMessage.value_or(info.message).data();
     json["status"] = "error";
     json["type"] = "response";
+
     return json;
 }
 
 boost::json::object
 makeError(Status const& status)
 {
-    auto wrapOptional = [](string_view const& str) {
-        return str.empty() ? nullopt : make_optional(str);
-    };
+    auto wrapOptional = [](string_view const& str) { return str.empty() ? nullopt : make_optional(str); };
 
     auto res = visit(
         overloadSet{
             [&status, &wrapOptional](RippledError err) {
                 if (err == ripple::rpcUNKNOWN)
-                {
-                    return boost::json::object{
-                        {"error", status.message},
-                        {"type", "response"},
-                        {"status", "error"}};
-                }
+                    return boost::json::object{{"error", status.message}, {"type", "response"}, {"status", "error"}};
 
-                return makeError(
-                    err,
-                    wrapOptional(status.error),
-                    wrapOptional(status.message));
+                return makeError(err, wrapOptional(status.error), wrapOptional(status.message));
             },
             [&status, &wrapOptional](ClioError err) {
-                return makeError(
-                    err,
-                    wrapOptional(status.error),
-                    wrapOptional(status.message));
+                return makeError(err, wrapOptional(status.error), wrapOptional(status.message));
             },
         },
-        status.code);
-    if (status.extraInfo)
-    {
+        status.code
+    );
+
+    if (status.extraInfo) {
         for (auto& [key, value] : status.extraInfo.value())
-        {
             res[key] = value;
-        }
     }
+
     return res;
 }
 
-}  // namespace RPC
+}  // namespace rpc

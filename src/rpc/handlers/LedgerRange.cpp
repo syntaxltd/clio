@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 /*
     This file is part of clio: https://github.com/XRPLF/clio
-    Copyright (c) 2022, the clio developers.
+    Copyright (c) 2023, the clio developers.
 
     Permission to use, copy, modify, and distribute this software for any
     purpose with or without fee is hereby granted, provided that the above
@@ -17,28 +17,34 @@
 */
 //==============================================================================
 
-#include <backend/BackendInterface.h>
-#include <rpc/RPCHelpers.h>
+#include "rpc/handlers/LedgerRange.h"
 
-namespace RPC {
+#include "rpc/JS.h"
+#include "rpc/common/Types.h"
 
-Result
-doLedgerRange(Context const& context)
+#include <boost/json/conversion.hpp>
+#include <boost/json/object.hpp>
+#include <boost/json/value.hpp>
+#include <ripple/protocol/jss.h>
+
+#include <optional>
+
+namespace rpc {
+
+LedgerRangeHandler::Result
+LedgerRangeHandler::process([[maybe_unused]] Context const& ctx) const
 {
-    boost::json::object response = {};
-
-    auto range = context.backend->fetchLedgerRange();
-    if (!range)
-    {
-        return Status{RippledError::rpcNOT_READY, "rangeNotFound"};
-    }
-    else
-    {
-        response[JS(ledger_index_min)] = range->minSequence;
-        response[JS(ledger_index_max)] = range->maxSequence;
-    }
-
-    return response;
+    // note: we can't get here if range is not available so it's safe
+    return Output{sharedPtrBackend_->fetchLedgerRange().value()};
 }
 
-}  // namespace RPC
+void
+tag_invoke(boost::json::value_from_tag, boost::json::value& jv, LedgerRangeHandler::Output const& output)
+{
+    jv = boost::json::object{
+        {JS(ledger_index_min), output.range.minSequence},
+        {JS(ledger_index_max), output.range.maxSequence},
+    };
+}
+
+}  // namespace rpc
