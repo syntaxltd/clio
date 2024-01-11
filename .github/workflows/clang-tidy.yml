@@ -1,0 +1,109 @@
+name: Clang-tidy check
+on:
+  schedule:
+    - cron:  '0 6 * * 1-5'
+  workflow_dispatch:
+  pull_request:
+    branches: [develop]
+    paths:
+      - .clang_tidy
+      - .github/workflows/clang-tidy.yml
+
+jobs:
+  clang_tidy:
+    runs-on: [self-hosted, Linux]
+    container:
+      image: rippleci/clio_ci:latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+            fetch-depth: 0
+
+      - name: Prepare runner
+        uses: ./.github/actions/prepare_runner
+        with:
+            disable_ccache: true
+
+      - name: Setup conan
+        uses: ./.github/actions/setup_conan
+        id: conan
+
+      - name: Restore cache
+        uses: ./.github/actions/restore_cache
+        id: restore_cache
+        with:
+          conan_dir: ${{ env.CONAN_USER_HOME }}/.conan
+          ccache_dir: ${{ env.CCACHE_DIR }}
+
+      - name: Run conan and cmake
+        uses: ./.github/actions/generate
+        with:
+          conan_profile: ${{ steps.conan.outputs.conan_profile }}
+          conan_cache_hit: ${{ steps.restore_cache.outputs.conan_cache_hit }}
+          build_type: Release
+
+      - name: Get number of threads
+        uses: ./.github/actions/get_number_of_threads
+        id: number_of_threads
+
+      - name: Run clang-tidy
+        continue-on-error: true
+        shell: bash
+        id: run_clang_tidy
+        run: |
+          run-clang-tidy-17 -p build -j ${{ steps.number_of_threads.outputs.threads_number }} -fix -quiet 1>output.txt
+
+      - name: Print issues found
+        if: ${{ steps.run_clang_tidy.outcome != 'success' }}
+        shell: bash
+        run: |
+          sed -i '/error\||/!d' ./output.txt
+          cat output.txt
+          rm output.txt
+
+      - name: Create an issue
+        if: ${{ steps.run_clang_tidy.outcome != 'success' }}
+        id: create_issue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo -e 'Clang-tidy found issues in the code:\n' > issue.md
+          echo -e "List of the issues found: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/" >> issue.md
+          gh issue create --assignee 'cindyyan317,godexsoft,kuznetsss' --label bug --title 'Clang-tidy found bugs in code🐛' --body-file ./issue.md > create_issue.log
+          created_issue=$(cat create_issue.log | sed 's|.*/||')
+          echo "created_issue=$created_issue" >> $GITHUB_OUTPUT
+          rm create_issue.log issue.md
+
+      - uses: crazy-max/ghaction-import-gpg@v5
+        with:
+          gpg_private_key: ${{ secrets.ACTIONS_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.ACTIONS_GPG_PASSPHRASE }}
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+
+      - name: Create PR with fixes
+        if: ${{ steps.run_clang_tidy.outcome != 'success' }}
+        uses: peter-evans/create-pull-request@v5
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        with:
+          commit-message: '[CI] clang-tidy auto fixes'
+          committer: Clio CI <skuznetsov@ripple.com>
+          branch: 'clang_tidy/autofix'
+          branch-suffix: timestamp
+          delete-branch: true
+          title: '[CI] clang-tidy auto fixes'
+          body: 'Fixes #${{ steps.create_issue.outputs.created_issue }}. Please review and commit clang-tidy fixes.'
+          reviewers: 'cindyyan317,godexsoft,kuznetsss'
+
+      - name: Fail the job
+        if: ${{ steps.run_clang_tidy.outcome != 'success' }}
+        shell: bash
+        run: exit 1

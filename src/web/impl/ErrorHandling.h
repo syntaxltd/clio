@@ -23,12 +23,18 @@
 #include "util/Assert.h"
 #include "web/interface/ConnectionBase.h"
 
-#include <boost/beast/http.hpp>
-#include <boost/json.hpp>
+#include <boost/beast/http/status.hpp>
+#include <boost/json/object.hpp>
+#include <boost/json/serialize.hpp>
+#include <fmt/core.h>
+#include <ripple/protocol/ErrorCodes.h>
 
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <variant>
 
 namespace web::detail {
 
@@ -127,15 +133,13 @@ public:
     }
 
     void
-    sendJsonParsingError(std::string_view reason) const
+    sendJsonParsingError() const
     {
         if (connection_->upgraded) {
-            connection_->send(
-                boost::json::serialize(rpc::makeError(rpc::RippledError::rpcBAD_SYNTAX)), boost::beast::http::status::ok
-            );
+            connection_->send(boost::json::serialize(rpc::makeError(rpc::RippledError::rpcBAD_SYNTAX)));
         } else {
             connection_->send(
-                fmt::format("Unable to parse request: {}", reason), boost::beast::http::status::bad_request
+                fmt::format("Unable to parse JSON from the request"), boost::beast::http::status::bad_request
             );
         }
     }
@@ -146,18 +150,23 @@ public:
         auto e = rpc::makeError(error);
 
         if (request_) {
-            auto const& req = request_.value();
-            auto const id = req.contains("id") ? req.at("id") : nullptr;
-            if (not id.is_null())
-                e["id"] = id;
+            auto const appendFieldIfExist = [&](auto const& field) {
+                if (request_->contains(field) and not request_->at(field).is_null())
+                    e[field] = request_->at(field);
+            };
 
-            e["request"] = req;
+            appendFieldIfExist(JS(id));
+
+            if (connection_->upgraded)
+                appendFieldIfExist(JS(api_version));
+
+            e[JS(request)] = request_.value();
         }
 
         if (connection_->upgraded) {
             return e;
         }
-        return {{"result", e}};
+        return {{JS(result), e}};
     }
 };
 

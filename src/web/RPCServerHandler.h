@@ -19,16 +19,38 @@
 
 #pragma once
 
+#include "data/BackendInterface.h"
 #include "feed/SubscriptionManager.h"
 #include "rpc/Errors.h"
 #include "rpc/Factories.h"
+#include "rpc/JS.h"
 #include "rpc/RPCHelpers.h"
 #include "rpc/common/impl/APIVersionParser.h"
 #include "util/JsonUtils.h"
 #include "util/Profiler.h"
+#include "util/Taggable.h"
+#include "util/config/Config.h"
+#include "util/log/Logger.h"
 #include "web/impl/ErrorHandling.h"
+#include "web/interface/ConnectionBase.h"
 
+#include <boost/asio/spawn.hpp>
+#include <boost/beast/core/error.hpp>
+#include <boost/json/array.hpp>
+#include <boost/json/object.hpp>
 #include <boost/json/parse.hpp>
+#include <boost/json/serialize.hpp>
+#include <boost/system/system_error.hpp>
+#include <ripple/protocol/jss.h>
+
+#include <chrono>
+#include <exception>
+#include <functional>
+#include <memory>
+#include <ratio>
+#include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace web {
 
@@ -42,8 +64,6 @@ class RPCServerHandler {
     std::shared_ptr<BackendInterface const> const backend_;
     std::shared_ptr<RPCEngineType> const rpcEngine_;
     std::shared_ptr<ETLType const> const etl_;
-    // subscription manager holds the shared_ptr of this class
-    std::weak_ptr<feed::SubscriptionManager> const subscriptions_;
     util::TagDecoratorFactory const tagFactory_;
     rpc::detail::ProductionAPIVersionParser apiVersionParser_;  // can be injected if needed
 
@@ -64,13 +84,11 @@ public:
         util::Config const& config,
         std::shared_ptr<BackendInterface const> const& backend,
         std::shared_ptr<RPCEngineType> const& rpcEngine,
-        std::shared_ptr<ETLType const> const& etl,
-        std::shared_ptr<feed::SubscriptionManager> const& subscriptions
+        std::shared_ptr<ETLType const> const& etl
     )
         : backend_(backend)
         , rpcEngine_(rpcEngine)
         , etl_(etl)
-        , subscriptions_(subscriptions)
         , tagFactory_(config)
         , apiVersionParser_(config.sectionOr("api_version", {}))
     {
@@ -104,31 +122,18 @@ public:
         } catch (boost::system::system_error const& ex) {
             // system_error thrown when json parsing failed
             rpcEngine_->notifyBadSyntax();
-            web::detail::ErrorHelper(connection).sendJsonParsingError(ex.what());
+            web::detail::ErrorHelper(connection).sendJsonParsingError();
+            LOG(log_.warn()) << "Error parsing JSON: " << ex.what() << ". For request: " << request;
         } catch (std::invalid_argument const& ex) {
             // thrown when json parses something that is not an object at top level
             rpcEngine_->notifyBadSyntax();
-            web::detail::ErrorHelper(connection).sendJsonParsingError(ex.what());
+            LOG(log_.warn()) << "Invalid argument error: " << ex.what() << ". For request: " << request;
+            web::detail::ErrorHelper(connection).sendJsonParsingError();
         } catch (std::exception const& ex) {
             LOG(perfLog_.error()) << connection->tag() << "Caught exception: " << ex.what();
             rpcEngine_->notifyInternalError();
             throw;
         }
-    }
-
-    /**
-     * @brief The callback when there is an error.
-     *
-     * Remove the session shared ptr from subscription manager.
-     *
-     * @param ec The error code
-     * @param connection The connection
-     */
-    void
-    operator()([[maybe_unused]] boost::beast::error_code ec, std::shared_ptr<web::ConnectionBase> const& connection)
-    {
-        if (auto manager = subscriptions_.lock(); manager)
-            manager->cleanup(connection);
     }
 
 private:
@@ -209,28 +214,31 @@ private:
                 // if the result is forwarded - just use it as is
                 // if forwarded request has error, for http, error should be in "result"; for ws, error should
                 // be at top
-                if (isForwarded && (json.contains("result") || connection->upgraded)) {
+                if (isForwarded && (json.contains(JS(result)) || connection->upgraded)) {
                     for (auto const& [k, v] : json)
                         response.insert_or_assign(k, v);
                 } else {
-                    response["result"] = json;
+                    response[JS(result)] = json;
                 }
 
                 // for ws there is an additional field "status" in the response,
                 // otherwise the "status" is in the "result" field
                 if (connection->upgraded) {
-                    auto const id = request.contains("id") ? request.at("id") : nullptr;
+                    auto const appendFieldIfExist = [&](auto const& field) {
+                        if (request.contains(field) and not request.at(field).is_null())
+                            response[field] = request.at(field);
+                    };
 
-                    if (not id.is_null())
-                        response["id"] = id;
+                    appendFieldIfExist(JS(id));
+                    appendFieldIfExist(JS(api_version));
 
-                    if (!response.contains("error"))
-                        response["status"] = "success";
+                    if (!response.contains(JS(error)))
+                        response[JS(status)] = JS(success);
 
-                    response["type"] = "response";
+                    response[JS(type)] = JS(response);
                 } else {
-                    if (response.contains("result") && !response["result"].as_object().contains("error"))
-                        response["result"].as_object()["status"] = "success";
+                    if (response.contains(JS(result)) && !response[JS(result)].as_object().contains(JS(error)))
+                        response[JS(result)].as_object()[JS(status)] = JS(success);
                 }
             }
 
